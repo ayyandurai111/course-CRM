@@ -1,0 +1,166 @@
+import { useState, FormEvent, useEffect } from "react";
+import Modal from "../modals/Modal";
+import { Field, inputClass, PrimaryButton } from "../forms/FormFields";
+import { apiRequest, ApiError } from "../../lib/apiClient";
+import type { Course, ContentItem, ContentType } from "../../types";
+
+export default function ContentFormModal({
+  content,
+  onClose,
+  onSaved,
+}: {
+  content: ContentItem | null;
+  onClose: () => void;
+  onSaved: () => void;
+}) {
+  const [courses, setCourses] = useState<Course[]>([]);
+  const [title, setTitle] = useState(content?.title ?? "");
+  const [description, setDescription] = useState(content?.description ?? "");
+  const [type, setType] = useState<ContentType>(content?.type ?? "VIDEO");
+  const [courseId, setCourseId] = useState(content?.courseId ?? "");
+  const [imageUrl, setImageUrl] = useState(content?.imageUrl ?? "");
+  const [file, setFile] = useState<File | null>(null);
+  const [error, setError] = useState<string | null>(null);
+  const [saving, setSaving] = useState(false);
+  const [uploadProgress, setUploadProgress] = useState<string | null>(null);
+
+  useEffect(() => {
+    apiRequest<{ courses: Course[] }>("/courses/admin")
+      .then((d) => setCourses(d.courses))
+      .catch(() => {});
+  }, []);
+
+  async function uploadFile(): Promise<{ contentId: string; fileKey: string; fileSizeBytes: number } | null> {
+    if (!file || !courseId) return null;
+    setUploadProgress("Uploading file…");
+    const formData = new FormData();
+    formData.append("file", file);
+    formData.append("type", type);
+    formData.append("courseId", courseId);
+    const res = await apiRequest<{ contentId: string; fileKey: string; fileSizeBytes: number }>(`/upload`, {
+      method: "POST",
+      body: formData,
+      isFormData: true,
+    });
+    setUploadProgress(null);
+    return res;
+  }
+
+  async function handleSubmit(e: FormEvent) {
+    e.preventDefault();
+    setError(null);
+    setSaving(true);
+    try {
+      let fileData: { contentId: string; fileKey: string; fileSizeBytes: number } | null = null;
+      if ((type === "VIDEO" || type === "PDF") && file) {
+        fileData = await uploadFile();
+      }
+
+      const body: Record<string, unknown> = {
+        title,
+        description: description || undefined,
+        type,
+        courseId,
+        imageUrl: type === "POST" ? imageUrl || undefined : undefined,
+      };
+      if (fileData) {
+        body.fileKey = fileData.fileKey;
+        body.fileSizeBytes = fileData.fileSizeBytes;
+      }
+
+      if (content) {
+        await apiRequest(`/content/${content.id}`, { method: "PATCH", body });
+      } else {
+        // Reuse the contentId reserved by /api/upload (if a file was
+        // uploaded) so the Storage path and DB row id line up.
+        if (fileData) body.id = fileData.contentId;
+        await apiRequest("/content", { method: "POST", body });
+      }
+      onSaved();
+    } catch (err) {
+      setError(err instanceof ApiError ? err.message : "Couldn't save this content.");
+    } finally {
+      setSaving(false);
+      setUploadProgress(null);
+    }
+  }
+
+  return (
+    <Modal title={content ? "Edit content" : "New content"} onClose={onClose}>
+      <form onSubmit={handleSubmit}>
+        <Field label="Type" htmlFor="ct-type">
+          <select
+            id="ct-type"
+            value={type}
+            disabled={!!content}
+            onChange={(e) => setType(e.target.value as ContentType)}
+            className={inputClass}
+          >
+            <option value="VIDEO">Video</option>
+            <option value="PDF">PDF</option>
+            <option value="POST">Post (image)</option>
+          </select>
+        </Field>
+
+        <Field label="Course" htmlFor="ct-course">
+          <select id="ct-course" required value={courseId} onChange={(e) => setCourseId(e.target.value)} className={inputClass}>
+            <option value="" disabled>
+              Select a course
+            </option>
+            {courses.map((c) => (
+              <option key={c.id} value={c.id}>
+                {c.title}
+              </option>
+            ))}
+          </select>
+        </Field>
+
+        <Field label="Title" htmlFor="ct-title">
+          <input id="ct-title" required value={title} onChange={(e) => setTitle(e.target.value)} className={inputClass} />
+        </Field>
+
+        <Field label="Description / caption" htmlFor="ct-desc">
+          <textarea id="ct-desc" rows={3} value={description} onChange={(e) => setDescription(e.target.value)} className={inputClass} />
+        </Field>
+
+        {(type === "VIDEO" || type === "PDF") && (
+          <Field label={type === "VIDEO" ? "Video file" : "PDF file"} htmlFor="ct-file">
+            <input
+              id="ct-file"
+              type="file"
+              accept={type === "VIDEO" ? "video/*" : "application/pdf"}
+              onChange={(e) => setFile(e.target.files?.[0] ?? null)}
+              className="block w-full text-sm text-ink-700 file:mr-3 file:rounded-full file:border-0 file:bg-ink-100 file:px-3 file:py-2 file:text-sm file:font-medium"
+            />
+            {content?.hasFile && !file && <p className="mt-1 text-xs text-ink-500">A file is already attached. Choose a new one to replace it.</p>}
+          </Field>
+        )}
+
+        {type === "POST" && (
+          <Field label="Image URL" htmlFor="ct-img">
+            <input
+              id="ct-img"
+              type="url"
+              placeholder="https://…"
+              pattern="https://.*"
+              title="Must be an https:// URL"
+              value={imageUrl}
+              onChange={(e) => setImageUrl(e.target.value)}
+              className={inputClass}
+            />
+          </Field>
+        )}
+
+        {uploadProgress && <p className="mb-3 text-sm text-ink-500">{uploadProgress}</p>}
+        {error && <p className="mb-4 text-sm font-medium text-red-600">{error}</p>}
+
+        <div className="flex justify-end gap-3 pt-1">
+          <button type="button" onClick={onClose} className="rounded-full px-5 py-2.5 text-sm font-medium text-ink-700">
+            Cancel
+          </button>
+          <PrimaryButton disabled={saving}>{saving ? "Saving…" : "Save as draft"}</PrimaryButton>
+        </div>
+      </form>
+    </Modal>
+  );
+}
