@@ -34,10 +34,16 @@ export default function PdfViewerModal({ content, onClose }: { content: ContentI
             <XIcon className="h-4 w-4" />
           </button>
         </div>
-        <div className="flex-1 bg-ink-100">
+        <div className="flex-1 bg-ink-100" onContextMenu={(e) => e.preventDefault()}>
           {loading && <Skeleton className="h-full w-full rounded-none" />}
           {error && <div className="p-6"><ErrorState message={error} /></div>}
-          {url && <iframe title={content.title} src={url} className="h-full w-full" />}
+          {url && (
+            // #toolbar=0&navpanes=0 hides Chrome's/Firefox's built-in PDF
+            // viewer toolbar (which otherwise has its own download/print
+            // buttons) — a viewer-level convention, not a real security
+            // boundary. See the note below on what this can't stop.
+            <iframe title={content.title} src={`${url}#toolbar=0&navpanes=0&scrollbar=0`} className="h-full w-full" />
+          )}
         </div>
       </div>
     </div>

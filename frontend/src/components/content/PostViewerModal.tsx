@@ -1,9 +1,17 @@
 import { useEffect } from "react";
+import { useProtectedFile } from "../../hooks/useProtectedFile";
 import { apiRequest } from "../../lib/apiClient";
 import type { ContentItem } from "../../types";
 import { XIcon } from "../common/Icons";
 
 export default function PostViewerModal({ content, onClose }: { content: ContentItem; onClose: () => void }) {
+  // Uploaded images go through the same private-storage + short-lived
+  // signed URL path as video/PDF. content.imageUrl is only used as a
+  // fallback for older content saved before uploads were supported for
+  // POST type — it's a public link with no access control of its own.
+  const { url: protectedUrl } = useProtectedFile(content.hasFile ? content.id : null);
+  const imageSrc = content.hasFile ? protectedUrl : content.imageUrl;
+
   useEffect(() => {
     function onKey(e: KeyboardEvent) {
       if (e.key === "Escape") onClose();
@@ -22,7 +30,15 @@ export default function PostViewerModal({ content, onClose }: { content: Content
             <XIcon className="h-4 w-4" />
           </button>
         </div>
-        {content.imageUrl && <img src={content.imageUrl} alt="" className="w-full" />}
+        {imageSrc && (
+          <img
+            src={imageSrc}
+            alt=""
+            draggable={false}
+            onContextMenu={(e) => e.preventDefault()}
+            className="w-full select-none"
+          />
+        )}
         {content.description && <p className="p-4 text-sm leading-relaxed text-ink-700">{content.description}</p>}
       </div>
     </div>

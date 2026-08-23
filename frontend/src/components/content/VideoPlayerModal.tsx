@@ -57,6 +57,10 @@ export default function VideoPlayerModal({ content, onClose }: { content: Conten
               src={url}
               controls
               autoPlay
+              controlsList="nodownload noremoteplayback"
+              disablePictureInPicture
+              disableRemotePlayback
+              onContextMenu={(e) => e.preventDefault()}
               className="h-full w-full"
               onTimeUpdate={handleTimeUpdate}
               onEnded={() => saveProgress(100, videoRef.current?.duration || 0)}

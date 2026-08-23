@@ -56,7 +56,7 @@ export default function ContentFormModal({
     setSaving(true);
     try {
       let fileData: { contentId: string; fileKey: string; fileSizeBytes: number } | null = null;
-      if ((type === "VIDEO" || type === "PDF") && file) {
+      if ((type === "VIDEO" || type === "PDF" || type === "POST") && file) {
         fileData = await uploadFile();
       }
 
@@ -65,7 +65,11 @@ export default function ContentFormModal({
         description: description || undefined,
         type,
         courseId,
-        imageUrl: type === "POST" ? imageUrl || undefined : undefined,
+        // Only fall back to a raw external URL when no file was uploaded
+        // for this POST — an uploaded file always wins since it's the
+        // access-controlled path (private storage + signed URL), while
+        // imageUrl is a public link with no auth/expiry at all.
+        imageUrl: type === "POST" && !fileData ? imageUrl || undefined : undefined,
       };
       if (fileData) {
         body.fileKey = fileData.fileKey;
@@ -127,21 +131,26 @@ export default function ContentFormModal({
           <textarea id="ct-desc" rows={3} value={description} onChange={(e) => setDescription(e.target.value)} className={inputClass} />
         </Field>
 
-        {(type === "VIDEO" || type === "PDF") && (
-          <Field label={type === "VIDEO" ? "Video file" : "PDF file"} htmlFor="ct-file">
+        {(type === "VIDEO" || type === "PDF" || type === "POST") && (
+          <Field label={type === "VIDEO" ? "Video file" : type === "PDF" ? "PDF file" : "Image file"} htmlFor="ct-file">
             <input
               id="ct-file"
               type="file"
-              accept={type === "VIDEO" ? "video/*" : "application/pdf"}
+              accept={type === "VIDEO" ? "video/*" : type === "PDF" ? "application/pdf" : "image/jpeg,image/png,image/webp"}
               onChange={(e) => setFile(e.target.files?.[0] ?? null)}
               className="block w-full text-sm text-ink-700 file:mr-3 file:rounded-full file:border-0 file:bg-ink-100 file:px-3 file:py-2 file:text-sm file:font-medium"
             />
             {content?.hasFile && !file && <p className="mt-1 text-xs text-ink-500">A file is already attached. Choose a new one to replace it.</p>}
+            {type === "POST" && (
+              <p className="mt-1 text-xs text-ink-500">
+                Uploading an image here keeps it private and access-controlled, same as videos/PDFs. Prefer this over a public URL below.
+              </p>
+            )}
           </Field>
         )}
 
-        {type === "POST" && (
-          <Field label="Image URL" htmlFor="ct-img">
+        {type === "POST" && !file && !content?.hasFile && (
+          <Field label="Image URL (fallback — not access-controlled)" htmlFor="ct-img">
             <input
               id="ct-img"
               type="url"
@@ -152,6 +161,9 @@ export default function ContentFormModal({
               onChange={(e) => setImageUrl(e.target.value)}
               className={inputClass}
             />
+            <p className="mt-1 text-xs text-amber-600">
+              Anyone with this link can view the image directly, even without an account or an active plan. Use the file upload above instead if this needs to stay private.
+            </p>
           </Field>
         )}
 
