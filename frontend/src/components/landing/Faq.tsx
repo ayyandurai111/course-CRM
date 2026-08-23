@@ -5,7 +5,7 @@ export default function Faq({ content }: { content: SiteContent["faq"] }) {
   const [openIndex, setOpenIndex] = useState<number | null>(0);
 
   return (
-    <section id="faq" className="mx-auto max-w-3xl px-5 py-20">
+    <section id="faq" className="scroll-mt-24 mx-auto max-w-3xl px-5 py-20">
       <p className="text-center font-mono text-xs font-medium uppercase tracking-widest text-amber-600">{content.eyebrow}</p>
       <h2 className="mt-2 text-center font-display text-3xl font-semibold tracking-tight text-ink-950">{content.title}</h2>
 

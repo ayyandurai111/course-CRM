@@ -1,4 +1,5 @@
 const express = require("express");
+const { isAllowedHttpsImageUrl } = require("../lib/urlSecurity");
 const { z } = require("zod");
 const { supabase, row, rows, toSnake, assertNoError } = require("../lib/db");
 const { deleteFileSafely } = require("../lib/storage");
@@ -294,7 +295,7 @@ router.get("/admin", authenticate, requireAdmin, async (req, res, next) => {
 const httpsUrl = z
   .string()
   .url()
-  .refine((v) => v.toLowerCase().startsWith("https://"), { message: "imageUrl must use https://." });
+  .refine(isAllowedHttpsImageUrl, { message: "imageUrl must use an approved HTTPS image origin." });
 
 const createContentSchema = z.object({
   // Optional: reuse the contentId reserved by POST /api/upload so the

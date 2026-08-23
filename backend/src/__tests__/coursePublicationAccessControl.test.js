@@ -38,7 +38,7 @@ function loadAccessServiceWithFakes({ usable, planId = "plan-1", plans = [], cou
         throw new Error(`unexpected table ${table}`);
       },
     },
-    rows: (data) => (data || []).map((r) => ({ ...r, courseIds: r.course_ids || r.courseIds, isActive: r.is_active ?? r.isActive })),
+    rows: (data) => (data || []).map((r) => ({ ...r, courseIds: r.course_ids || r.courseIds, isActive: r.is_active ?? r.isActive, startAt: r.start_at ?? r.startAt })),
     row: (r) => r,
     assertNoError: (error) => {
       if (error) throw new Error("unexpected db error");
@@ -128,4 +128,27 @@ test("a course not referenced by any active plan grants no access even if publis
   });
   const ids = await access.getAccessibleCourseIds("student-1");
   assert.equal(ids.has("course-z"), false);
+});
+
+test("future-start course is visible only in upcoming feed and does not grant content access before start", async () => {
+  const access = loadAccessServiceWithFakes({
+    usable: true,
+    plans: [{ id: "plan-1", is_active: true, course_ids: ["course-future"] }],
+    courses: [{ id: "course-future", is_published: true, start_at: new Date(Date.now() + 60 * 60 * 1000).toISOString() }],
+  });
+  const ids = await access.getAccessibleCourseIds("student-1");
+  assert.equal(ids.has("course-future"), false);
+
+  const content = { id: "content-future", courseId: "course-future", type: "VIDEO", status: "PUBLISHED", publishedAt: new Date(Date.now() - 1000) };
+  assert.equal(await access.userCanAccessContent("student-1", content), false);
+});
+
+test("started course remains accessible when start_at is in the past", async () => {
+  const access = loadAccessServiceWithFakes({
+    usable: true,
+    plans: [{ id: "plan-1", is_active: true, course_ids: ["course-started"] }],
+    courses: [{ id: "course-started", is_published: true, start_at: new Date(Date.now() - 60 * 60 * 1000).toISOString() }],
+  });
+  const ids = await access.getAccessibleCourseIds("student-1");
+  assert.equal(ids.has("course-started"), true);
 });

@@ -42,7 +42,7 @@ function AssignPlanModal({ student, plans, onClose, onSaved }: { student: Studen
           <button type="button" onClick={onClose} className="rounded-full px-5 py-2.5 text-sm font-medium text-ink-700">
             Cancel
           </button>
-          <PrimaryButton disabled={saving}>{saving ? "Saving…" : "Assign plan"}</PrimaryButton>
+          <PrimaryButton disabled={saving || !planId}>{saving ? "Saving…" : "Assign plan"}</PrimaryButton>
         </div>
       </form>
     </Modal>
@@ -74,13 +74,20 @@ export default function StudentsSection() {
 
   useEffect(() => {
     setStudents(null);
-    load();
+    const timer = window.setTimeout(() => {
+      load();
+    }, 250);
+    return () => window.clearTimeout(timer);
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [search]);
 
   async function toggleActive(student: Student) {
-    await apiRequest(`/students/${student.id}/status`, { method: "PATCH", body: { isActive: !student.isActive } });
-    load();
+    try {
+      await apiRequest(`/students/${student.id}/status`, { method: "PATCH", body: { isActive: !student.isActive } });
+      await load();
+    } catch (err) {
+      setError(err instanceof ApiError ? err.message : "Couldn't update this student's status.");
+    }
   }
 
   async function handleDelete(student: Student) {
@@ -130,7 +137,7 @@ export default function StudentsSection() {
                 </div>
                 <p className="mt-2 text-sm text-ink-500">Plan: {s.subscriptions?.[0]?.plan.name ?? "None"}</p>
                 <div className="mt-3 flex flex-wrap gap-4 border-t border-ink-900/8 pt-3">
-                  <button onClick={() => setAssigning(s)} className="text-sm font-medium text-ink-700 hover:text-ink-950">
+                  <button onClick={() => setAssigning(s)} disabled={plans.length === 0} className="text-sm font-medium text-ink-700 hover:text-ink-950 disabled:cursor-not-allowed disabled:opacity-50">
                     Assign plan
                   </button>
                   <button onClick={() => toggleActive(s)} className="text-sm font-medium text-amber-600 hover:text-amber-700">
@@ -168,7 +175,7 @@ export default function StudentsSection() {
                       </span>
                     </td>
                     <td className="space-x-3 px-5 py-3 text-right">
-                      <button onClick={() => setAssigning(s)} className="font-medium text-ink-700 hover:text-ink-950">
+                      <button onClick={() => setAssigning(s)} disabled={plans.length === 0} className="font-medium text-ink-700 hover:text-ink-950 disabled:cursor-not-allowed disabled:opacity-50">
                         Assign plan
                       </button>
                       <button onClick={() => toggleActive(s)} className="font-medium text-amber-600 hover:text-amber-700">

@@ -22,9 +22,9 @@ export default function AdminPanel() {
   return (
     <div className="min-h-screen bg-paper-50">
       <header className="sticky top-0 z-30 flex items-center justify-between border-b border-ink-900/8 bg-white px-5 py-3">
-        <span className="font-display text-lg font-semibold text-ink-950">Coursewell Admin</span>
+        <span className="min-w-0 truncate font-display text-lg font-semibold text-ink-950">Coursewell Admin</span>
         <div className="flex items-center gap-4">
-          <span className="hidden text-sm text-ink-500 sm:inline">{user?.email}</span>
+          <span className="hidden max-w-[18rem] truncate text-sm text-ink-500 sm:inline">{user?.email}</span>
           <button onClick={handleLogout} className="rounded-full border border-ink-900/15 px-3.5 py-1.5 text-sm font-medium text-ink-700 hover:bg-ink-100">
             Log out
           </button>

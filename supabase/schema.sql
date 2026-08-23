@@ -28,6 +28,7 @@ create table if not exists public.users (
   avatar_url text,
   role text not null default 'STUDENT' check (role in ('STUDENT', 'ADMIN')),
   is_active boolean not null default true,
+  pending_deletion boolean not null default false,
   -- Spec fix — "deleted user recreation": set true the moment an admin
   -- requests deletion, BEFORE the Supabase Auth account deletion is
   -- attempted. Combined with `is_active = false` (set at the same
@@ -45,6 +46,12 @@ create table if not exists public.users (
   pending_deletion boolean not null default false,
   created_at timestamptz not null default now()
 );
+-- If public.users already exists, CREATE TABLE IF NOT EXISTS does not
+-- add newly introduced columns. Add the column explicitly so this schema
+-- works both on a fresh database and on an existing database.
+alter table public.users
+  add column if not exists pending_deletion boolean not null default false;
+
 create index if not exists users_role_idx on public.users (role);
 create index if not exists users_pending_deletion_idx on public.users (pending_deletion) where pending_deletion = true;
 
@@ -275,8 +282,8 @@ exception
     -- Re-raised with the original SQLSTATE (23505) so the backend can
     -- tell a concurrent-assignment race apart from other failures and
     -- return a controlled 409 instead of an unhandled 500.
-    raise exception 'Student % already has an active subscription', p_student_id
-      using errcode = '23505';
+    raise exception using message = format('Student %s already has an active subscription', p_student_id),
+      errcode = '23505';
 end;
 $$;
 
@@ -334,7 +341,7 @@ begin
   end if;
 
   if p_new_role not in ('STUDENT', 'ADMIN') then
-    raise exception 'Unsupported role %', p_new_role using errcode = '22023'; -- invalid_parameter_value
+    raise exception using message = format('Unsupported role %s', p_new_role), errcode = '22023'; -- invalid_parameter_value
   end if;
 
   select * into v_actor from public.users where id = p_actor_id;
@@ -342,16 +349,16 @@ begin
     raise exception 'Actor % does not exist', p_actor_id;
   end if;
   if v_actor.role <> 'ADMIN' or v_actor.is_active is not true then
-    raise exception 'Actor % is not an active admin' using errcode = '42501'; -- insufficient_privilege
+    raise exception using message = format('Actor %s is not an active admin', p_actor_id), errcode = '42501'; -- insufficient_privilege
   end if;
 
   if p_actor_id = p_target_id then
-    raise exception 'Admins cannot change their own role' using errcode = '42501';
+    raise exception using message = 'Admins cannot change their own role', errcode = '42501';
   end if;
 
   select * into v_target from public.users where id = p_target_id;
   if not found then
-    raise exception 'Target user % does not exist', p_target_id using errcode = 'P0002'; -- no_data_found
+    raise exception using message = format('Target user %s does not exist', p_target_id), errcode = 'P0002'; -- no_data_found
   end if;
 
   if v_target.role = p_new_role then
@@ -461,7 +468,7 @@ begin
 
   select * into v_row from public.content where id = p_content_id for update;
   if not found then
-    raise exception 'Content % not found', p_content_id using errcode = 'P0002'; -- no_data_found
+    raise exception using message = format('Content %s not found', p_content_id), errcode = 'P0002'; -- no_data_found
   end if;
 
   -- Re-verify the EXACT record this publish was authorized against
@@ -472,12 +479,12 @@ begin
   if v_row.course_id is distinct from p_expected_course_id
      or v_row.type is distinct from p_expected_type
      or v_row.file_key is distinct from p_expected_file_key then
-    raise exception 'Content % was modified concurrently and can no longer be published as validated; please retry', p_content_id
-      using errcode = '40001'; -- serialization_failure
+    raise exception using message = format('Content %s was modified concurrently and can no longer be published as validated; please retry', p_content_id),
+      errcode = '40001'; -- serialization_failure
   end if;
 
   if v_row.status not in ('DRAFT', 'SCHEDULED', 'UNPUBLISHED') then
-    raise exception 'Cannot move content from % to PUBLISHED', v_row.status using errcode = '23514'; -- check_violation
+    raise exception using message = format('Cannot move content from %s to PUBLISHED', v_row.status), errcode = '23514'; -- check_violation
   end if;
 
   update public.content
@@ -548,7 +555,7 @@ begin
 
   select * into v_course from public.courses where id = p_course_id for update;
   if not found then
-    raise exception 'Course % does not exist', p_course_id using errcode = 'P0002';
+    raise exception using message = format('Course %s does not exist', p_course_id), errcode = 'P0002';
   end if;
 
   -- Queue every file this course's content currently references, before
@@ -614,7 +621,7 @@ begin
 
   select * into v_content from public.content where id = p_content_id for update;
   if not found then
-    raise exception 'Content % does not exist', p_content_id using errcode = 'P0002';
+    raise exception using message = format('Content %s does not exist', p_content_id), errcode = 'P0002';
   end if;
 
   if v_content.file_key is not null then

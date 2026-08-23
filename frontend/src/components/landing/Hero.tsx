@@ -2,7 +2,7 @@ import type { SiteContent } from "../../types";
 
 export default function Hero({ content }: { content: SiteContent["hero"] }) {
   return (
-    <section id="top" className="relative overflow-hidden px-5 pb-20 pt-16 md:pb-28 md:pt-24">
+    <section id="top" className="scroll-mt-24 relative overflow-hidden px-5 pb-20 pt-16 md:pb-28 md:pt-24">
       <div
         className="pointer-events-none absolute -right-32 -top-32 h-96 w-96 rounded-full bg-amber-400/20 blur-3xl"
         aria-hidden="true"

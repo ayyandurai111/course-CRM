@@ -13,9 +13,15 @@ export default function ScheduleModal({
   onClose: () => void;
   onSaved: () => void;
 }) {
-  const [value, setValue] = useState(
-    content.scheduledAt ? new Date(content.scheduledAt).toISOString().slice(0, 16) : ""
-  );
+  function toLocalDateTimeInput(iso?: string | null) {
+    if (!iso) return "";
+    const date = new Date(iso);
+    if (Number.isNaN(date.getTime())) return "";
+    const pad = (n: number) => String(n).padStart(2, "0");
+    return `${date.getFullYear()}-${pad(date.getMonth() + 1)}-${pad(date.getDate())}T${pad(date.getHours())}:${pad(date.getMinutes())}`;
+  }
+
+  const [value, setValue] = useState(() => toLocalDateTimeInput(content.scheduledAt));
   const [error, setError] = useState<string | null>(null);
   const [saving, setSaving] = useState(false);
 
@@ -26,10 +32,17 @@ export default function ScheduleModal({
     setError(null);
     setSaving(true);
     try {
-      // The <input type="datetime-local"> value has no timezone — it's
-      // interpreted in the browser's local timezone, then sent as a
-      // real ISO instant so the server always stores UTC.
-      const scheduledAt = new Date(value).toISOString();
+      if (!value) {
+        setError("Choose a publish date and time.");
+        return;
+      }
+      const localDate = new Date(value);
+      if (Number.isNaN(localDate.getTime())) {
+        setError("Choose a valid publish date and time.");
+        return;
+      }
+      // datetime-local is interpreted in the browser's local timezone.
+      const scheduledAt = localDate.toISOString();
       await apiRequest(`/content/${content.id}/${isReschedule ? "reschedule" : "schedule"}`, {
         method: "POST",
         body: { scheduledAt },

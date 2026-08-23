@@ -3,8 +3,15 @@ const { supabase, row, assertNoError } = require("../lib/db");
 const { authenticate } = require("../middleware/auth");
 const { userCanAccessContent } = require("../services/accessService");
 const { fileExists, getSignedUrl } = require("../lib/storage");
+const { createPlaybackToken, verifyPlaybackToken, PLAYBACK_TOKEN_TTL_SECONDS } = require("../lib/playbackToken");
+const { Readable } = require("stream");
 
 const router = express.Router();
+
+function setPlaybackCookie(res, token) {
+  const secure = process.env.NODE_ENV === "production" ? "; Secure" : "";
+  res.set("Set-Cookie", `course_playback=${encodeURIComponent(token)}; Path=/api/files/stream/; Max-Age=${PLAYBACK_TOKEN_TTL_SECONDS}; HttpOnly; SameSite=Strict${secure}`);
+}
 
 // Spec fix — "Improve Signed URL Lifetime": this used to be 10 minutes,
 // which is far longer than necessary for sensitive paid content — a URL
@@ -52,33 +59,112 @@ const SIGNED_URL_TTL_SECONDS = 90;
 // TTL is the actual upper bound on how long access can outlive
 // revocation. Do not describe this route elsewhere as providing instant
 // revocation — it does not.
+async function loadAuthorizedContent(contentId, userId, role) {
+  const { data, error } = await supabase
+    .from("content")
+    .select("*")
+    .eq("id", contentId)
+    .maybeSingle();
+  assertNoError(error, "Failed to load content");
+  if (!data || !data.file_key) return { status: 404 };
+  const content = row(data);
+  if (role !== "ADMIN") {
+    const allowed = await userCanAccessContent(userId, content);
+    if (!allowed) return { status: 403 };
+  }
+  const exists = await fileExists(content.fileKey);
+  if (!exists) return { status: 404 };
+  return { content };
+}
+
+// Mint a browser-bound playback cookie. The actual Storage signed URL is
+// never exposed to the browser. The cookie is HttpOnly and SameSite=Strict,
+// so copying the media URL alone does not grant access to another browser.
+router.get("/:contentId/playback", authenticate, async (req, res, next) => {
+  try {
+    const result = await loadAuthorizedContent(req.params.contentId, req.user.id, req.user.role);
+    if (result.status) return res.status(result.status).json({ error: result.status === 403 ? "You do not have access to this file." : "File not found." });
+
+    const token = createPlaybackToken({ userId: req.user.id, contentId: req.params.contentId, role: req.user.role });
+    setPlaybackCookie(res, token);
+    res.set("Cache-Control", "no-store, private");
+    res.json({
+      url: `/api/files/stream/${encodeURIComponent(req.params.contentId)}`,
+      expiresInSeconds: PLAYBACK_TOKEN_TTL_SECONDS,
+    });
+  } catch (err) {
+    next(err);
+  }
+});
+
+// Stream protected media through the API instead of returning a permanent
+// or directly reusable Supabase Storage URL. Supports HTTP Range requests
+// so large videos remain seekable without downloading the entire file.
+router.get("/stream/:contentId", async (req, res, next) => {
+  try {
+    const token = String(req.headers.cookie || "").split(";").map((part) => part.trim()).find((part) => part.startsWith("course_playback="))?.slice("course_playback=".length) || null;
+    const claims = verifyPlaybackToken(token);
+    if (!claims || claims.cid !== req.params.contentId) {
+      return res.status(401).json({ error: "Playback session expired. Please reopen the content." });
+    }
+
+    const result = await loadAuthorizedContent(req.params.contentId, claims.sub, "ADMIN" === claims.role ? "ADMIN" : "STUDENT");
+    if (result.status) return res.status(result.status).end();
+    const content = result.content;
+
+    // Re-check the user's current access on every media request. This means
+    // suspension/plan revocation stops subsequent range requests immediately.
+    const { data: profile, error: profileError } = await supabase.from("users").select("role,is_active").eq("id", claims.sub).maybeSingle();
+    assertNoError(profileError, "Failed to verify playback account");
+    if (!profile?.is_active) return res.status(401).end();
+    if (profile.role === "ADMIN") {
+      // Current admin status is authoritative; no student-plan check needed.
+    } else {
+      const allowed = await userCanAccessContent(claims.sub, content);
+      if (!allowed) return res.status(403).end();
+    }
+
+    const signedUrl = await getSignedUrl(content.fileKey, 60);
+    const headers = {};
+    for (const name of ["range", "if-range", "if-none-match"]) {
+      if (req.headers[name]) headers[name] = req.headers[name];
+    }
+    const upstream = await fetch(signedUrl, { headers });
+    if (!upstream.ok && upstream.status !== 206 && upstream.status !== 304) {
+      return res.status(upstream.status === 404 ? 404 : 502).end();
+    }
+
+    const contentType = upstream.headers.get("content-type") || (content.type === "PDF" ? "application/pdf" : content.type === "VIDEO" ? "video/mp4" : "application/octet-stream");
+    res.status(upstream.status);
+    res.set({
+      "Content-Type": contentType,
+      "Cache-Control": "no-store, private, max-age=0",
+      "Pragma": "no-cache",
+      "X-Content-Type-Options": "nosniff",
+      "Content-Disposition": "inline",
+      "Accept-Ranges": upstream.headers.get("accept-ranges") || "bytes",
+    });
+    for (const name of ["content-length", "content-range", "etag", "last-modified"]) {
+      const value = upstream.headers.get(name);
+      if (value) res.set(name, value);
+    }
+    if (upstream.status === 304 || !upstream.body) return res.end();
+    Readable.fromWeb(upstream.body).pipe(res);
+  } catch (err) {
+    next(err);
+  }
+});
+
+// Legacy endpoint deliberately remains authorization-protected but no longer
+// exposes a Storage signed URL to clients. New clients must use /playback.
 router.get("/:contentId", authenticate, async (req, res, next) => {
   try {
-    const { data, error } = await supabase
-      .from("content")
-      .select("*")
-      .eq("id", req.params.contentId)
-      .maybeSingle();
-    assertNoError(error, "Failed to load content");
-    if (!data || !data.file_key) {
-      return res.status(404).json({ error: "File not found." });
-    }
-    const content = row(data);
-
-    if (req.user.role !== "ADMIN") {
-      const allowed = await userCanAccessContent(req.user.id, content);
-      if (!allowed) return res.status(403).json({ error: "You do not have access to this file." });
-    }
-
-    const exists = await fileExists(content.fileKey);
-    if (!exists) return res.status(404).json({ error: "File not found in storage." });
-
-    const url = await getSignedUrl(content.fileKey, SIGNED_URL_TTL_SECONDS);
-    // No-store: this response must never be cached by a shared proxy or
-    // the browser's HTTP cache — every call is meant to mint a fresh,
-    // freshly-authorized URL (requirement #4).
-    res.set("Cache-Control", "no-store");
-    res.json({ url, expiresInSeconds: SIGNED_URL_TTL_SECONDS });
+    const result = await loadAuthorizedContent(req.params.contentId, req.user.id, req.user.role);
+    if (result.status) return res.status(result.status).json({ error: result.status === 403 ? "You do not have access to this file." : "File not found." });
+    const token = createPlaybackToken({ userId: req.user.id, contentId: req.params.contentId, role: req.user.role });
+    setPlaybackCookie(res, token);
+    res.set("Cache-Control", "no-store, private");
+    res.json({ url: `/api/files/stream/${encodeURIComponent(req.params.contentId)}`, expiresInSeconds: PLAYBACK_TOKEN_TTL_SECONDS });
   } catch (err) {
     next(err);
   }

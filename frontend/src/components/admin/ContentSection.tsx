@@ -72,8 +72,13 @@ export default function ContentSection() {
     if (action === "schedule" || action === "reschedule") return setScheduling(item);
     if (action === "delete") {
       if (!confirm(`Delete "${item.title}"? This cannot be undone.`)) return;
-      await apiRequest(`/content/${item.id}`, { method: "DELETE" });
-      return load();
+      try {
+        await apiRequest(`/content/${item.id}`, { method: "DELETE" });
+        await load();
+      } catch (err) {
+        alert(err instanceof ApiError ? err.message : "Couldn't delete this content.");
+      }
+      return;
     }
     // publish / unpublish / archive
     try {
@@ -154,12 +159,12 @@ export default function ContentSection() {
                     <button
                       onClick={() => setOpenMenuId(openMenuId === item.id ? null : item.id)}
                       className="rounded-full p-1.5 text-ink-500 hover:bg-ink-100"
-                      aria-label="Actions"
+                      aria-label={`Actions for ${item.title}`} aria-expanded={openMenuId === item.id} aria-haspopup="menu"
                     >
                       <MoreVerticalIcon className="h-4 w-4" />
                     </button>
                     {openMenuId === item.id && (
-                      <div className="absolute right-0 z-10 mt-1 w-40 overflow-hidden rounded-xl border border-ink-900/8 bg-white text-left shadow-card">
+                      <div role="menu" className="absolute right-0 z-10 mt-1 w-40 overflow-hidden rounded-xl border border-ink-900/8 bg-white text-left shadow-card">
                         {ACTIONS_BY_STATUS[item.status].map((action) => (
                           <button
                             key={action}
@@ -230,12 +235,12 @@ export default function ContentSection() {
                       <button
                         onClick={() => setOpenMenuId(openMenuId === item.id ? null : item.id)}
                         className="rounded-full p-1.5 text-ink-500 hover:bg-ink-100"
-                        aria-label="Actions"
+                        aria-label={`Actions for ${item.title}`} aria-expanded={openMenuId === item.id} aria-haspopup="menu"
                       >
                         <MoreVerticalIcon className="h-4 w-4" />
                       </button>
                       {openMenuId === item.id && (
-                        <div className="absolute right-5 z-10 mt-1 w-40 overflow-hidden rounded-xl border border-ink-900/8 bg-white text-left shadow-card">
+                        <div role="menu" className="absolute right-5 z-10 mt-1 w-40 overflow-hidden rounded-xl border border-ink-900/8 bg-white text-left shadow-card">
                           {ACTIONS_BY_STATUS[item.status].map((action) => (
                             <button
                               key={action}

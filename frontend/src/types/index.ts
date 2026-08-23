@@ -21,6 +21,7 @@ export interface Course {
   description: string;
   category?: string | null;
   thumbnailUrl?: string | null;
+  startAt?: string | null;
   isPublished: boolean;
   contentCounts?: { VIDEO: number; PDF: number; POST: number };
 }

@@ -11,10 +11,11 @@ function friendlyAuthError(err: unknown): string {
 }
 
 export default function LoginPage() {
-  const { user, loginWithGoogle } = useAuth();
+  const { user, loginWithGoogle, loginWithPassword } = useAuth();
   const navigate = useNavigate();
   const [error, setError] = useState<string | null>(null);
   const [submitting, setSubmitting] = useState(false);
+  const [testSubmitting, setTestSubmitting] = useState(false);
 
   // Supabase's Google sign-in is a full-page redirect (there's no
   // popup), so we can't get the signed-in user back synchronously from
@@ -36,6 +37,24 @@ export default function LoginPage() {
     }
   }
 
+  async function handleTestAccount() {
+    const email = import.meta.env.VITE_TEST_ACCOUNT_EMAIL;
+    const password = import.meta.env.VITE_TEST_ACCOUNT_PASSWORD;
+    if (!email || !password) {
+      setError("Test account is not configured.");
+      return;
+    }
+
+    setError(null);
+    setTestSubmitting(true);
+    try {
+      await loginWithPassword(email, password);
+    } catch (err) {
+      setError(friendlyAuthError(err));
+      setTestSubmitting(false);
+    }
+  }
+
   return (
     <div className="flex min-h-screen items-center justify-center bg-paper-50 px-5">
       <div className="w-full max-w-sm text-center">
@@ -45,7 +64,9 @@ export default function LoginPage() {
 
         <div className="rounded-xl2 border border-ink-900/8 bg-white p-8 shadow-card">
           <h1 className="font-display text-xl font-semibold text-ink-950">Welcome</h1>
-          <p className="mt-1.5 text-sm text-ink-500">Sign in with your Google account to continue.</p>
+          <p className="mt-1.5 text-sm text-ink-500">
+            Sign in with Google to continue{import.meta.env.VITE_ENABLE_TEST_ACCOUNT === "true" ? " or use the test account below." : "."}
+          </p>
 
           <button
             onClick={handleGoogle}
@@ -60,6 +81,17 @@ export default function LoginPage() {
             </svg>
             {submitting ? "Signing in…" : "Continue with Google"}
           </button>
+
+          {import.meta.env.VITE_ENABLE_TEST_ACCOUNT === "true" && (
+            <button
+              type="button"
+              onClick={handleTestAccount}
+              disabled={submitting || testSubmitting}
+              className="mt-3 w-full rounded-full border border-amber-400/50 bg-amber-50 py-3 text-sm font-semibold text-amber-800 transition hover:bg-amber-100 disabled:opacity-60"
+            >
+              {testSubmitting ? "Signing in to test account…" : "Continue with Test Account"}
+            </button>
+          )}
 
           {error && <p className="mt-4 text-sm font-medium text-red-600">{error}</p>}
 

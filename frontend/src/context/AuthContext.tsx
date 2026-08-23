@@ -15,6 +15,7 @@ interface AuthContextValue {
    * this context instead (see LoginPage.tsx).
    */
   loginWithGoogle: () => Promise<void>;
+  loginWithPassword: (email: string, password: string) => Promise<void>;
   logout: () => Promise<void>;
 }
 
@@ -83,12 +84,21 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     // The browser navigates to Google now; nothing else runs here.
   }
 
+  async function loginWithPassword(email: string, password: string) {
+    const { error } = await supabase.auth.signInWithPassword({ email, password });
+    if (error) throw error;
+  }
+
   async function logout() {
     await supabase.auth.signOut();
     setUser(null);
   }
 
-  return <AuthContext.Provider value={{ user, loading, loginWithGoogle, logout }}>{children}</AuthContext.Provider>;
+  return (
+    <AuthContext.Provider value={{ user, loading, loginWithGoogle, loginWithPassword, logout }}>
+      {children}
+    </AuthContext.Provider>
+  );
 }
 
 export function useAuth() {

@@ -39,6 +39,12 @@ services:
         sync: false
       - key: SUPABASE_STORAGE_BUCKET
         value: course-files
+      - key: TRUST_PROXY_HOPS
+        value: "1"
+      - key: ALLOWED_IMAGE_ORIGINS
+        sync: false
+      - key: ADMIN_BOOTSTRAP_TOKEN
+        sync: false
 
       # --- Backend: upload limits / rate limiting --------------------
       - key: MAX_VIDEO_SIZE_MB

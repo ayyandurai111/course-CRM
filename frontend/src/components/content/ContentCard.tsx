@@ -7,14 +7,15 @@ function formatDate(iso?: string | null) {
 }
 
 function formatDuration(seconds?: number | null) {
-  if (!seconds) return null;
-  const m = Math.floor(seconds / 60);
-  const s = seconds % 60;
+  if (seconds == null || !Number.isFinite(seconds) || seconds <= 0) return null;
+  const total = Math.floor(seconds);
+  const m = Math.floor(total / 60);
+  const s = total % 60;
   return `${m}:${String(s).padStart(2, "0")}`;
 }
 
 export default function ContentCard({ item, onOpen }: { item: ContentItem; onOpen: (item: ContentItem) => void }) {
-  const progress = item.progress?.percent ?? 0;
+  const progress = Math.min(100, Math.max(0, Number(item.progress?.percent ?? 0) || 0));
   const viewed = item.progress?.viewed ?? false;
 
   return (

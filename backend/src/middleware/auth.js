@@ -1,5 +1,6 @@
 const { supabase } = require("../lib/supabase");
 const { row, assertNoError } = require("../lib/db");
+const { isAllowedHttpsImageUrl } = require("../lib/urlSecurity");
 
 /**
  * Verifies the Supabase access token on the Authorization header (via
@@ -53,7 +54,7 @@ async function authenticate(req, res, next) {
       p_user_id: authUser.id,
       p_email: authUser.email || "",
       p_name: meta.full_name || meta.name || authUser.email?.split("@")[0] || "New user",
-      p_avatar_url: meta.avatar_url || meta.picture || null,
+      p_avatar_url: isAllowedHttpsImageUrl(meta.avatar_url) ? meta.avatar_url : (isAllowedHttpsImageUrl(meta.picture) ? meta.picture : null),
       // Server-only env var — never sent to or read from the frontend.
       // See doc comment above / get_or_create_user_profile()'s comment
       // in schema.sql for exactly how this is used.

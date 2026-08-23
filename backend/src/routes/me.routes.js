@@ -1,4 +1,5 @@
 const express = require("express");
+const { isAllowedHttpsImageUrl } = require("../lib/urlSecurity");
 const { z } = require("zod");
 const { supabase, row, rows, toSnake, assertNoError } = require("../lib/db");
 const { authenticate } = require("../middleware/auth");
@@ -56,7 +57,7 @@ router.get("/progress", authenticate, async (req, res, next) => {
 const httpsUrl = z
   .string()
   .url()
-  .refine((v) => v.toLowerCase().startsWith("https://"), { message: "avatarUrl must use https://." });
+  .refine(isAllowedHttpsImageUrl, { message: "avatarUrl must use an approved HTTPS image origin." });
 
 const profileSchema = z.object({
   name: z.string().min(1).optional(),

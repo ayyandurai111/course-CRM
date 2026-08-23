@@ -61,11 +61,18 @@ async function getAccessibleCourseIds(userId) {
   // plan still references — see doc comment above.
   const { data: coursesData, error: coursesError } = await supabase
     .from("courses")
-    .select("id, is_published")
+    .select("id, is_published, start_at")
     .in("id", [...candidateCourseIds])
     .eq("is_published", true);
   assertNoError(coursesError, "Failed to load courses");
-  for (const course of rows(coursesData)) courseIds.add(course.id);
+
+  // A future course is visible in the dedicated Upcoming Courses feed but
+  // must not grant lesson/content access before its scheduled start.
+  // Courses without a start_at remain immediately accessible.
+  const now = Date.now();
+  for (const course of rows(coursesData)) {
+    if (!course.startAt || new Date(course.startAt).getTime() <= now) courseIds.add(course.id);
+  }
 
   return courseIds;
 }

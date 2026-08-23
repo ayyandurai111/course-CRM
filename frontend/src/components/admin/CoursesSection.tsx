@@ -104,6 +104,7 @@ export default function CoursesSection() {
                   <th className="px-5 py-3 font-medium">Title</th>
                   <th className="px-5 py-3 font-medium">Category</th>
                   <th className="px-5 py-3 font-medium">Content</th>
+                  <th className="px-5 py-3 font-medium">Starts</th>
                   <th className="px-5 py-3 font-medium">Status</th>
                   <th className="px-5 py-3 font-medium" />
                 </tr>
@@ -114,6 +115,7 @@ export default function CoursesSection() {
                     <td className="px-5 py-3 font-medium text-ink-900">{c.title}</td>
                     <td className="px-5 py-3 text-ink-500">{c.category || "—"}</td>
                     <td className="px-5 py-3 text-ink-500">{c._count.content}</td>
+                    <td className="px-5 py-3 text-ink-500">{c.startAt ? new Date(c.startAt).toLocaleString(undefined, { dateStyle: "medium", timeStyle: "short" }) : "—"}</td>
                     <td className="px-5 py-3">
                       <span
                         className={`rounded-full px-2.5 py-0.5 text-xs font-medium ${

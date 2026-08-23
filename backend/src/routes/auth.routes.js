@@ -1,4 +1,5 @@
 const express = require("express");
+const { isAllowedHttpsImageUrl } = require("../lib/urlSecurity");
 const { z } = require("zod");
 const { supabase, row, toSnake, assertNoError } = require("../lib/db");
 const { authenticate } = require("../middleware/auth");
@@ -19,7 +20,7 @@ const syncSchema = z.object({
   avatarUrl: z
     .string()
     .url()
-    .refine((v) => v.toLowerCase().startsWith("https://"), { message: "avatarUrl must use https://." })
+    .refine(isAllowedHttpsImageUrl, { message: "avatarUrl must use an approved HTTPS image origin." })
     .optional(),
 });
 

@@ -1,12 +1,13 @@
 import { ReactNode } from "react";
 
-export function Field({ label, htmlFor, children }: { label: string; htmlFor: string; children: ReactNode }) {
+export function Field({ label, htmlFor, hint, children }: { label: string; htmlFor: string; hint?: string; children: ReactNode }) {
   return (
     <div className="mb-4">
       <label htmlFor={htmlFor} className="mb-1 block text-sm font-medium text-ink-700">
         {label}
       </label>
       {children}
+      {hint && <p className="mt-1 text-xs text-ink-500">{hint}</p>}
     </div>
   );
 }

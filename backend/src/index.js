@@ -35,7 +35,11 @@ const app = express();
 // req.protocol are unreliable too. `1` = trust exactly one hop (the
 // platform's own proxy), which is the correct, safe value for a single
 // reverse-proxy deployment like Render's.
-app.set("trust proxy", 1);
+const TRUST_PROXY_HOPS = Number(process.env.TRUST_PROXY_HOPS ?? 1);
+if (!Number.isInteger(TRUST_PROXY_HOPS) || TRUST_PROXY_HOPS < 0 || TRUST_PROXY_HOPS > 5) {
+  throw new Error("TRUST_PROXY_HOPS must be an integer between 0 and 5.");
+}
+app.set("trust proxy", TRUST_PROXY_HOPS);
 
 // Spec #15B: explicit production CSP instead of relying on helmet()'s
 // defaults. Domains are derived from this deployment's own config
@@ -76,7 +80,7 @@ app.use(
         scriptSrc: ["'self'"],
         styleSrc: ["'self'", "https://fonts.googleapis.com"],
         fontSrc: ["'self'", "https://fonts.gstatic.com"],
-        imgSrc: ["'self'", "https:", "data:", ...supabaseSources],
+        imgSrc: ["'self'", ...supabaseSources, ...(process.env.ALLOWED_IMAGE_ORIGINS || "").split(",").map((v) => v.trim()).filter(Boolean)],
         connectSrc: ["'self'", ...supabaseSources],
         mediaSrc: ["'self'", ...supabaseSources],
         frameSrc: ["'self'", ...supabaseSources],
@@ -100,6 +104,15 @@ app.use(
   })
 );
 app.use(express.json({ limit: "2mb" }));
+app.use((err, req, res, next) => {
+  if (err && (err.type === "entity.parse.failed" || err instanceof SyntaxError)) {
+    return res.status(400).json({ error: "Invalid JSON request body." });
+  }
+  if (err && err.type === "entity.too.large") {
+    return res.status(413).json({ error: "Request body is too large." });
+  }
+  next(err);
+});
 app.use(morgan(process.env.NODE_ENV === "production" ? "combined" : "dev"));
 
 // Default idle-socket timeout for every route (spec #3D). The upload
@@ -112,11 +125,9 @@ app.use((req, res, next) => {
   next();
 });
 
-// Generic API rate limit; auth routes get a stricter one below. Store
-// selection (spec #10): per-process by default, shared across
-// instances only if REDIS_URL is configured and the optional Redis
-// packages are installed — see lib/rateLimitStore.js and
-// docs/SCALING.md for the full accounting of what is/isn't global.
+// Generic API rate limit; auth routes get a stricter one below. These
+// counters are process-local because this deployment is intentionally
+// single-instance. Horizontal scaling fails closed via REDIS_URL check below.
 app.use(
   "/api",
   rateLimit({ windowMs: 15 * 60 * 1000, max: 300, standardHeaders: true, legacyHeaders: false, store: createRateLimitStore("api") })
@@ -179,31 +190,31 @@ app.use((req, res) => res.status(404).json({ error: "Not found." }));
 
 // Central error handler — never leaks stack traces or secrets to the client.
 app.use((err, req, res, next) => {
-  console.error(err);
-  const status = err.status || 500;
-  const message = status === 500 ? "Something went wrong. Please try again." : err.message;
+  if (res.headersSent) return next(err);
+  const status = Number.isInteger(err?.status) && err.status >= 400 && err.status <= 599 ? err.status : 500;
+  const isProduction = process.env.NODE_ENV === "production";
+  console.error(`[error] ${req.method} ${req.originalUrl}`, err);
+  const message = status >= 500 && isProduction
+    ? "Something went wrong. Please try again."
+    : (typeof err?.message === "string" && err.message ? err.message : "Request failed.");
   res.status(status).json({ error: message });
 });
 
-const PORT = process.env.PORT || 4000;
-// Spec fix — "Prepare Rate Limits for Multiple Servers": upload
-// concurrency/temp-disk gating (lib/uploadGate.js) is process-local and
-// has no Redis-backed alternative yet (see that module's doc comment
-// for the full design). If an operator has set REDIS_URL — signaling
-// they've likely scaled this service to multiple instances and wired up
-// shared rate-limit storage — say so loudly at startup rather than
-// silently leaving upload concurrency/byte limits un-shared, since a
-// per-instance-only cap on those specifically means the true aggregate
-// ceiling across instances is (limit × instance count).
+// Fail closed for horizontally scaled deployments until shared upload
+// concurrency/temp-disk accounting is explicitly configured. Redis-backed
+// rate limiting without shared upload gating would create a misleading
+// partial security boundary, so REDIS_URL is rejected for this build.
 if (process.env.REDIS_URL) {
-  console.warn(
-    "[startup] REDIS_URL is set (rate limiters will use it if the optional ioredis/rate-limit-redis " +
-      "packages are installed — see lib/rateLimitStore.js). NOTE: upload concurrency and temp-disk-byte " +
-      "limits in lib/uploadGate.js are still process-local ONLY and are not yet backed by Redis — if this " +
-      "service runs more than one instance, those two specific limits are enforced per-instance, not " +
-      "globally. See docs/SCALING.md."
+  throw new Error(
+    "REDIS_URL is not supported by this build because upload concurrency and temp-disk limits are not globally shared. " +
+    "Keep a single backend instance, or implement a shared upload gate before enabling horizontal scaling."
   );
 }
+if (process.env.ADMIN_BOOTSTRAP_TOKEN && process.env.NODE_ENV === "production") {
+  console.warn("[security] ADMIN_BOOTSTRAP_TOKEN is enabled in production. Remove it immediately after bootstrap.");
+}
+
+const PORT = process.env.PORT || 4000;
 const server = app.listen(PORT, () => {
   console.log(`Course CRM API listening on port ${PORT}`);
   startPublishScheduler();
@@ -224,3 +235,17 @@ const server = app.listen(PORT, () => {
 server.headersTimeout = Number(process.env.SERVER_HEADERS_TIMEOUT_MS) || 65 * 1000;
 server.requestTimeout = 0; // disabled server-wide; see per-route timeouts instead
 server.keepAliveTimeout = Number(process.env.SERVER_KEEPALIVE_TIMEOUT_MS) || 61 * 1000;
+
+
+function shutdown(signal) {
+  console.log(`[shutdown] ${signal}`);
+  server.close((err) => {
+    if (err) { console.error("[shutdown] server close failed", err); process.exitCode = 1; }
+    process.exit();
+  });
+  setTimeout(() => process.exit(1), 10000).unref();
+}
+process.once("SIGTERM", () => shutdown("SIGTERM"));
+process.once("SIGINT", () => shutdown("SIGINT"));
+process.on("unhandledRejection", (reason) => console.error("[process] unhandledRejection", reason));
+process.on("uncaughtException", (err) => { console.error("[process] uncaughtException", err); shutdown("uncaughtException"); });

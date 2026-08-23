@@ -2,7 +2,7 @@ import type { SiteContent } from "../../types";
 
 export default function Features({ content }: { content: SiteContent["features"] }) {
   return (
-    <section id="features" className="bg-ink-950 px-5 py-20 text-paper-50">
+    <section id="features" className="scroll-mt-24 bg-ink-950 px-5 py-20 text-paper-50">
       <div className="mx-auto max-w-6xl">
         <p className="font-mono text-xs font-medium uppercase tracking-widest text-amber-400">{content.eyebrow}</p>
         <h2 className="mt-2 max-w-lg font-display text-3xl font-semibold tracking-tight">{content.title}</h2>

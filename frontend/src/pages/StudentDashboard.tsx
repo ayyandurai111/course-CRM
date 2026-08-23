@@ -1,7 +1,7 @@
 import { useEffect, useState, useCallback } from "react";
 import { apiRequest, ApiError } from "../lib/apiClient";
 import { useAuth } from "../context/AuthContext";
-import type { ContentItem, ContentType, Subscription } from "../types";
+import type { ContentItem, ContentType, Course, Subscription } from "../types";
 import DashboardHeader from "../components/student/DashboardHeader";
 import StatCards from "../components/student/StatCards";
 import ContentTabs from "../components/student/ContentTabs";
@@ -17,24 +17,46 @@ export default function StudentDashboard() {
   const [tab, setTab] = useState<ContentType | "ALL">("ALL");
   const [items, setItems] = useState<ContentItem[] | null>(null);
   const [upcoming, setUpcoming] = useState<ContentItem[]>([]);
+  const [upcomingCourses, setUpcomingCourses] = useState<Course[]>([]);
   const [subscription, setSubscription] = useState<Subscription | null>(null);
   const [progress, setProgress] = useState({ overallPercent: 0, total: 0 });
   const [error, setError] = useState<string | null>(null);
+  const [upcomingCoursesError, setUpcomingCoursesError] = useState<string | null>(null);
   const [active, setActive] = useState<ContentItem | null>(null);
 
   const load = useCallback(async () => {
     setError(null);
     try {
-      const [contentRes, upcomingRes, planRes, progressRes] = await Promise.all([
+      const results = await Promise.allSettled([
         apiRequest<{ content: ContentItem[] }>(`/content${tab !== "ALL" ? `?type=${tab}` : ""}`),
         apiRequest<{ content: ContentItem[] }>("/content/upcoming"),
+        apiRequest<{ courses: Course[] }>("/courses/upcoming"),
         apiRequest<{ subscription: Subscription | null }>("/me/plan"),
         apiRequest<{ overallPercent: number; total: number }>("/me/progress"),
       ]);
-      setItems(contentRes.content);
-      setUpcoming(upcomingRes.content);
-      setSubscription(planRes.subscription);
-      setProgress({ overallPercent: progressRes.overallPercent, total: progressRes.total });
+
+      const [contentRes, upcomingRes, upcomingCoursesRes, planRes, progressRes] = results;
+      if (contentRes.status === "rejected") throw contentRes.reason;
+      if (planRes.status === "rejected") throw planRes.reason;
+      if (progressRes.status === "rejected") throw progressRes.reason;
+
+      setItems(contentRes.value.content);
+      setSubscription(planRes.value.subscription);
+      setProgress({ overallPercent: progressRes.value.overallPercent, total: progressRes.value.total });
+
+      if (upcomingRes.status === "fulfilled") setUpcoming(upcomingRes.value.content);
+      else setUpcoming([]);
+      if (upcomingCoursesRes.status === "fulfilled") {
+        setUpcomingCourses(upcomingCoursesRes.value.courses);
+        setUpcomingCoursesError(null);
+      } else {
+        setUpcomingCourses([]);
+        setUpcomingCoursesError(
+          upcomingCoursesRes.reason instanceof ApiError
+            ? upcomingCoursesRes.reason.message
+            : "Upcoming courses are temporarily unavailable."
+        );
+      }
     } catch (err) {
       setError(err instanceof ApiError ? err.message : "Couldn't load your dashboard right now.");
     }
@@ -68,7 +90,7 @@ export default function StudentDashboard() {
           ) : (
             <StatCards
               overallPercent={progress.overallPercent}
-              totalItems={items?.length ?? progress.total}
+              totalItems={progress.total}
               planName={subscription?.plan.name ?? "None"}
             />
           )}
@@ -80,9 +102,47 @@ export default function StudentDashboard() {
           </div>
         )}
 
+        {(upcomingCourses.length > 0 || upcomingCoursesError) && (
+          <section className="mt-8">
+            <div className="mb-3 flex items-end justify-between gap-3">
+              <div>
+                <p className="font-mono text-[10px] font-medium uppercase tracking-widest text-amber-600">Your learning path</p>
+                <h2 className="mt-1 font-display text-lg font-semibold text-ink-950">Upcoming Courses</h2>
+              </div>
+            </div>
+            {upcomingCoursesError && (
+              <p className="mb-3 text-sm text-ink-500" role="status">{upcomingCoursesError}</p>
+            )}
+            {upcomingCourses.length > 0 && <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-3">
+              {upcomingCourses.map((course) => (
+                <article key={course.id} className="overflow-hidden rounded-xl2 border border-ink-900/8 bg-white shadow-card">
+                  <div className="aspect-[16/8] bg-ink-100">
+                    {course.thumbnailUrl ? (
+                      <img src={course.thumbnailUrl} alt="" className="h-full w-full object-cover" />
+                    ) : (
+                      <div className="flex h-full items-center justify-center font-display text-2xl font-semibold text-ink-300">{course.title.slice(0, 1)}</div>
+                    )}
+                  </div>
+                  <div className="p-4">
+                    {course.category && <span className="rounded-full bg-ink-100 px-2 py-0.5 text-xs font-medium text-ink-500">{course.category}</span>}
+                    <h3 className="mt-2 font-display font-semibold text-ink-950">{course.title}</h3>
+                    <p className="mt-1 line-clamp-2 text-sm text-ink-500">{course.description}</p>
+                    <p className="mt-3 text-xs font-medium text-amber-700">
+                      Starts {course.startAt ? new Date(course.startAt).toLocaleString(undefined, { dateStyle: "medium", timeStyle: "short" }) : "soon"}
+                    </p>
+                  </div>
+                </article>
+              ))}
+            </div>}
+          </section>
+        )}
+
         {upcoming.length > 0 && (
           <section className="mt-8">
-            <h2 className="mb-3 font-display text-lg font-semibold text-ink-950">Upcoming</h2>
+            <div className="mb-3">
+              <p className="font-mono text-[10px] font-medium uppercase tracking-widest text-amber-600">Scheduled learning</p>
+              <h2 className="mt-1 font-display text-lg font-semibold text-ink-950">Upcoming Lessons</h2>
+            </div>
             <div className="flex gap-3 overflow-x-auto pb-1">
               {upcoming.map((item) => (
                 <div key={item.id} className="min-w-[220px] rounded-xl2 border border-dashed border-ink-300 bg-white p-4">
@@ -123,7 +183,13 @@ export default function StudentDashboard() {
 
       {active?.type === "VIDEO" && <VideoPlayerModal content={active} onClose={closeAndRefresh} />}
       {active?.type === "PDF" && <PdfViewerModal content={active} onClose={closeAndRefresh} />}
-      {active?.type === "POST" && <PostViewerModal content={active} onClose={closeAndRefresh} />}
+      {active?.type === "POST" && items && (
+        <PostViewerModal
+          items={items.filter((i) => i.type === "POST")}
+          initialIndex={items.filter((i) => i.type === "POST").findIndex((i) => i.id === active.id)}
+          onClose={closeAndRefresh}
+        />
+      )}
     </div>
   );
 }

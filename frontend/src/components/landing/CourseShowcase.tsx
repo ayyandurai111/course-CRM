@@ -24,7 +24,7 @@ export default function CourseShowcase({ content }: { content: SiteContent["cour
   }, []);
 
   return (
-    <section id="courses" className="mx-auto max-w-6xl px-5 py-20">
+    <section id="courses" className="scroll-mt-24 mx-auto max-w-6xl px-5 py-20">
       <div className="mb-10 max-w-lg">
         <p className="font-mono text-xs font-medium uppercase tracking-widest text-amber-600">{content.eyebrow}</p>
         <h2 className="mt-2 font-display text-3xl font-semibold tracking-tight text-ink-950">

@@ -7,7 +7,8 @@
     "dev": "nodemon src/index.js",
     "start": "node src/index.js",
     "seed:admin": "node scripts/promoteAdmin.js",
-    "test": "node --test src/__tests__/*.test.js"
+    "test": "node --test src/__tests__/*.test.js",
+    "seed:test": "node scripts/seedTestAccount.js"
   },
   "dependencies": {
     "@supabase/supabase-js": "^2.45.4",
@@ -18,7 +19,7 @@
     "helmet": "^7.1.0",
     "morgan": "^1.10.0",
     "multer": "^2.2.0",
-    "node-cron": "^3.0.3",
+    "node-cron": "^4.6.0",
     "zod": "^3.23.8"
   },
   "devDependencies": {

@@ -14,7 +14,7 @@ export default function Header() {
   return (
     <header className="sticky top-0 z-40 border-b border-ink-900/5 bg-paper-50/80 backdrop-blur-md">
       <div className="mx-auto flex max-w-6xl items-center justify-between px-5 py-4">
-        <a href="#top" className="font-display text-lg font-semibold tracking-tight text-ink-950">
+        <a href="#top" onClick={() => setOpen(false)} className="font-display text-lg font-semibold tracking-tight text-ink-950">
           Coursewell
         </a>
 

@@ -9,6 +9,19 @@ anywhere — every screen reads from a real Supabase project you control.
 > Supabase (Auth + Postgres + Storage). The architecture and every
 > business rule are unchanged; only the underlying platform is different.
 
+## Test student account
+
+For manual testing without assigning a plan from the Admin panel, this project includes an optional test-student seeder. It creates a non-admin Supabase Auth account, creates/updates a `[TEST] All Access` plan containing every current course, and assigns that plan with lifetime access.
+
+1. Set `TEST_ACCOUNT_EMAIL`, `TEST_ACCOUNT_PASSWORD`, and optionally `TEST_ACCOUNT_NAME` in `backend/.env`.
+2. Run `npm run seed:test --workspace backend`.
+3. Put the same test email/password in `frontend/.env` as `VITE_TEST_ACCOUNT_EMAIL` / `VITE_TEST_ACCOUNT_PASSWORD`.
+4. Set `VITE_ENABLE_TEST_ACCOUNT=true` and rebuild the frontend.
+5. The Login page will show **Continue with Test Account**.
+
+The credentials are public to the browser when this button is enabled, so use this only for non-sensitive test/demo content. Re-run the seed command after adding courses so the test plan includes them.
+
+
 ## Architecture
 
 ```
@@ -213,6 +226,12 @@ broken or empty before first setup.
 Course cards and pricing plans themselves are **not** edited here — those
 come from the real Courses/Plans data, exactly as before.
 
+### Course start dates / Upcoming Courses
+
+Courses now support an optional `start_at` timestamp. Admins can set this in the course editor. Published courses with a future start time appear in the authenticated student dashboard under **Upcoming Courses**, but only when the student has an active, non-expired subscription whose plan includes that course. Scheduled lessons remain separate under **Upcoming Lessons**.
+
+For an existing Supabase database, apply `supabase/migrations/20260823_add_course_start_at.sql` before deploying the frontend/backend changes.
+
 ## Data model (Postgres tables — see `supabase/schema.sql`)
 
 - `users` — `{ email, name, role: STUDENT|ADMIN, avatar_url, is_active, created_at }`, `id` = Supabase Auth user id (uuid)
@@ -268,3 +287,24 @@ for the bucket + RLS setup.
 cd backend
 npm test     # unit tests: publish state machine + upload file-validation logic
 ```
+
+## Production validation — Upcoming Courses
+
+- `courses.start_at` is stored as `timestamptz` and indexed for published upcoming-course queries.
+- Student Upcoming Courses are restricted to published courses included in the student's currently usable plan.
+- A future-start course does **not** grant content access before its `start_at`; access automatically opens at the start time without a scheduled job.
+- Courses with no `start_at` retain the existing immediate-access behavior.
+- Admin datetime fields are rendered in the administrator's local timezone and converted to UTC on submission, avoiding the common `datetime-local` UTC display bug.
+- Dashboard requests use partial-failure handling so an Upcoming Courses service outage does not blank the student's normal content dashboard.
+- Regression tests cover future-start denial and post-start access.
+
+Before production deployment:
+
+```bash
+npm run install:all
+npm run build
+npm test --prefix backend
+supabase db push
+```
+
+The build/test commands must be run in CI or the deployment environment with network access to install all locked dependencies. A complete build could not be executed in the isolated validation environment when dependencies were unavailable.

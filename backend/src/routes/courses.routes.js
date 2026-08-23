@@ -1,4 +1,5 @@
 const express = require("express");
+const { isAllowedHttpsImageUrl } = require("../lib/urlSecurity");
 const { z } = require("zod");
 const { supabase, row, rows, toSnake, assertNoError } = require("../lib/db");
 const { deleteFileSafely } = require("../lib/storage");
@@ -66,6 +67,31 @@ router.get("/", async (req, res, next) => {
 // Admin: full list including unpublished, with a content item count.
 // Batched (spec #13): one query for all courses' content rows instead
 // of one COUNT query per course.
+// Student: courses that are explicitly scheduled to start in the future and
+// are included in the student's currently usable plan. Only published courses
+// are eligible (accessService is the single source of truth for entitlement).
+router.get("/upcoming", authenticate, async (req, res, next) => {
+  try {
+    const { getAccessibleCourseIds } = require("../services/accessService");
+    const accessibleCourseIds = Array.from(await getAccessibleCourseIds(req.user.id));
+    if (accessibleCourseIds.length === 0) return res.json({ courses: [] });
+
+    const { data, error } = await supabase
+      .from("courses")
+      .select("*")
+      .in("id", accessibleCourseIds)
+      .eq("is_published", true)
+      .not("start_at", "is", null)
+      .gt("start_at", new Date().toISOString())
+      .order("start_at", { ascending: true });
+    assertNoError(error, "Failed to load upcoming courses");
+
+    res.json({ courses: rows(data) });
+  } catch (err) {
+    next(err);
+  }
+});
+
 router.get("/admin", authenticate, requireAdmin, async (req, res, next) => {
   try {
     const { data: coursesData, error: coursesError } = await supabase.from("courses").select("*");
@@ -98,13 +124,14 @@ router.get("/admin", authenticate, requireAdmin, async (req, res, next) => {
 const httpsUrl = z
   .string()
   .url()
-  .refine((v) => v.toLowerCase().startsWith("https://"), { message: "thumbnailUrl must use https://." });
+  .refine(isAllowedHttpsImageUrl, { message: "thumbnailUrl must use an approved HTTPS image origin." });
 
 const courseSchema = z.object({
-  title: z.string().min(1),
-  description: z.string().min(1),
-  category: z.string().optional(),
+  title: z.string().trim().min(1, "Title is required."),
+  description: z.string().trim().min(1, "Description is required."),
+  category: z.string().trim().optional(),
   thumbnailUrl: httpsUrl.optional().or(z.literal("")),
+  startAt: z.string().datetime({ offset: true }).nullable().optional(),
   isPublished: z.boolean().optional(),
 });
 
@@ -113,7 +140,7 @@ router.post("/", authenticate, requireAdmin, async (req, res, next) => {
     const parsed = courseSchema.safeParse(req.body);
     if (!parsed.success) return res.status(400).json({ error: parsed.error.errors[0].message });
 
-    const { title, description, category, thumbnailUrl, isPublished } = parsed.data;
+    const { title, description, category, thumbnailUrl, startAt, isPublished } = parsed.data;
     let slug = slugify(title);
     let n = 1;
     while (await isSlugTaken(slug)) slug = `${slugify(title)}-${n++}`;
@@ -123,6 +150,7 @@ router.post("/", authenticate, requireAdmin, async (req, res, next) => {
       description,
       category: category || null,
       thumbnailUrl: thumbnailUrl || null,
+      startAt: startAt || null,
       isPublished: !!isPublished,
       slug,
     };
