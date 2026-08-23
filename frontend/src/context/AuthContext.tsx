@@ -28,18 +28,30 @@ export function AuthProvider({ children }: { children: ReactNode }) {
   // can tell a *real* sign-in apart from Supabase re-emitting SIGNED_IN
   // for the same session (see note below).
   const loadedUserIdRef = useRef<string | null>(null);
+  // Once the very first auth check has finished, we never flip `loading`
+  // back to true again. Background re-validation (tab refocus, token
+  // refresh, multi-tab sync) should update `user` quietly if it needs
+  // to — it must NOT swap the whole page back to a full-screen loader,
+  // which is what was unmounting the dashboard and making it look like
+  // an unwanted reload every time you switched tabs and came back.
+  const hasFinishedInitialCheckRef = useRef(false);
 
   useEffect(() => {
     let cancelled = false;
 
-    async function loadProfile() {
+    function finishInitialCheck() {
+      hasFinishedInitialCheckRef.current = true;
+      if (!cancelled) setLoading(false);
+    }
+
+    async function loadProfile(isInitial: boolean) {
       try {
         const data = await apiRequest<{ user: User }>("/auth/me");
         if (!cancelled) setUser(data.user);
       } catch {
         if (!cancelled) setUser(null);
       } finally {
-        if (!cancelled) setLoading(false);
+        if (isInitial) finishInitialCheck();
       }
     }
 
@@ -52,34 +64,37 @@ export function AuthProvider({ children }: { children: ReactNode }) {
       if (cancelled) return;
       if (session) {
         loadedUserIdRef.current = session.user.id;
-        loadProfile();
+        loadProfile(true);
       } else {
-        setLoading(false);
+        finishInitialCheck();
       }
     });
 
     const {
       data: { subscription },
     } = supabase.auth.onAuthStateChange((event, session) => {
+      // Ignore anything that fires before the initial check above has
+      // resolved — that first check owns setLoading(false) on its own.
+      if (!hasFinishedInitialCheckRef.current) return;
+
       if (event === "SIGNED_OUT" || !session) {
         loadedUserIdRef.current = null;
         setUser(null);
-        setLoading(false);
         return;
       }
       if (event === "SIGNED_IN") {
         // Supabase re-fires "SIGNED_IN" whenever the tab regains focus
         // and it re-validates the existing session (not just on an
         // actual new login). If we already loaded this same user, this
-        // is one of those re-fires — ignore it, otherwise the app
-        // flashes back to a loading state every time you switch tabs
-        // and return, which looks like an unwanted reload.
+        // is one of those re-fires — ignore it entirely.
         if (loadedUserIdRef.current === session.user.id) return;
 
-        // /auth/sync captures the freshest name/photo from the Google
-        // account on this login, then returns the up-to-date profile.
+        // A genuinely different user signed in. /auth/sync captures the
+        // freshest name/photo from the Google account on this login,
+        // then returns the up-to-date profile. Note: no setLoading(true)
+        // here — the page keeps showing whatever it already had while
+        // this resolves in the background, instead of blanking out.
         loadedUserIdRef.current = session.user.id;
-        setLoading(true);
         apiRequest<{ user: User }>("/auth/sync", { method: "POST" })
           .then((data) => !cancelled && setUser(data.user))
           .catch(() => {
@@ -87,8 +102,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
               loadedUserIdRef.current = null;
               setUser(null);
             }
-          })
-          .finally(() => !cancelled && setLoading(false));
+          });
       }
     });
 

@@ -15,7 +15,12 @@ function FullScreenLoader() {
 
 function RequireRole({ role, children }: { role: "STUDENT" | "ADMIN"; children: JSX.Element }) {
   const { user, loading } = useAuth();
-  if (loading) return <FullScreenLoader />;
+  // Only show the full-screen loader while there's no user yet (the very
+  // first check on page load). If we already have a user rendered, never
+  // swap back to the loader — that would unmount the whole dashboard and
+  // reset all its state, which is exactly what made the app look like it
+  // was auto-reloading whenever a tab regained focus.
+  if (loading && !user) return <FullScreenLoader />;
   if (!user) return <Navigate to="/login" replace />;
   if (user.role !== role) {
     return <Navigate to={user.role === "ADMIN" ? "/admin" : "/dashboard"} replace />;
