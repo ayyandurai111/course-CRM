@@ -1,4 +1,4 @@
-import { createContext, useContext, useEffect, useState, ReactNode } from "react";
+import { createContext, useContext, useEffect, useRef, useState, ReactNode } from "react";
 import { supabase } from "../lib/supabaseClient";
 import { apiRequest } from "../lib/apiClient";
 import type { User } from "../types";
@@ -24,6 +24,10 @@ const AuthContext = createContext<AuthContextValue | undefined>(undefined);
 export function AuthProvider({ children }: { children: ReactNode }) {
   const [user, setUser] = useState<User | null>(null);
   const [loading, setLoading] = useState(true);
+  // Tracks which auth user id we've already loaded a profile for, so we
+  // can tell a *real* sign-in apart from Supabase re-emitting SIGNED_IN
+  // for the same session (see note below).
+  const loadedUserIdRef = useRef<string | null>(null);
 
   useEffect(() => {
     let cancelled = false;
@@ -46,25 +50,44 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     // (including the redirect back from Google OAuth).
     supabase.auth.getSession().then(({ data: { session } }) => {
       if (cancelled) return;
-      if (session) loadProfile();
-      else setLoading(false);
+      if (session) {
+        loadedUserIdRef.current = session.user.id;
+        loadProfile();
+      } else {
+        setLoading(false);
+      }
     });
 
     const {
       data: { subscription },
     } = supabase.auth.onAuthStateChange((event, session) => {
       if (event === "SIGNED_OUT" || !session) {
+        loadedUserIdRef.current = null;
         setUser(null);
         setLoading(false);
         return;
       }
       if (event === "SIGNED_IN") {
+        // Supabase re-fires "SIGNED_IN" whenever the tab regains focus
+        // and it re-validates the existing session (not just on an
+        // actual new login). If we already loaded this same user, this
+        // is one of those re-fires — ignore it, otherwise the app
+        // flashes back to a loading state every time you switch tabs
+        // and return, which looks like an unwanted reload.
+        if (loadedUserIdRef.current === session.user.id) return;
+
         // /auth/sync captures the freshest name/photo from the Google
         // account on this login, then returns the up-to-date profile.
+        loadedUserIdRef.current = session.user.id;
         setLoading(true);
         apiRequest<{ user: User }>("/auth/sync", { method: "POST" })
           .then((data) => !cancelled && setUser(data.user))
-          .catch(() => !cancelled && setUser(null))
+          .catch(() => {
+            if (!cancelled) {
+              loadedUserIdRef.current = null;
+              setUser(null);
+            }
+          })
           .finally(() => !cancelled && setLoading(false));
       }
     });
