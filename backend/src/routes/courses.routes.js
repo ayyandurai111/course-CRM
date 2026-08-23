@@ -72,14 +72,14 @@ router.get("/", async (req, res, next) => {
 // are eligible (accessService is the single source of truth for entitlement).
 router.get("/upcoming", authenticate, async (req, res, next) => {
   try {
-    const { getAccessibleCourseIds } = require("../services/accessService");
-    const accessibleCourseIds = Array.from(await getAccessibleCourseIds(req.user.id));
-    if (accessibleCourseIds.length === 0) return res.json({ courses: [] });
+    const { getUpcomingCourseIds } = require("../services/accessService");
+    const upcomingCourseIds = Array.from(await getUpcomingCourseIds(req.user.id));
+    if (upcomingCourseIds.length === 0) return res.json({ courses: [] });
 
     const { data, error } = await supabase
       .from("courses")
       .select("*")
-      .in("id", accessibleCourseIds)
+      .in("id", upcomingCourseIds)
       .eq("is_published", true)
       .not("start_at", "is", null)
       .gt("start_at", new Date().toISOString())

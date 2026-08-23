@@ -33,9 +33,22 @@ const { getCurrentSubscription } = require("./subscriptionService");
  * course.isPublished check duplicated at every call site.
  */
 async function getAccessibleCourseIds(userId) {
+  const { courseIds } = await getPlanLinkedPublishedCourses(userId, { excludeFuture: true });
+  return courseIds;
+}
+
+/**
+ * Shared by getAccessibleCourseIds (content access — excludes future
+ * courses) and getUpcomingCourseIds (the Upcoming Courses feed —
+ * excludes everything EXCEPT future courses). Both need the same base
+ * set: courses linked to the user's active plan that are also
+ * currently published — they only differ on which side of "now" the
+ * start date has to fall on.
+ */
+async function getPlanLinkedPublishedCourses(userId, { excludeFuture }) {
   const { subscription, usable } = await getCurrentSubscription(userId);
   const courseIds = new Set();
-  if (!usable) return courseIds;
+  if (!usable) return { courseIds };
 
   const planIds = [subscription.planId];
 
@@ -55,7 +68,7 @@ async function getAccessibleCourseIds(userId) {
     if (plan.isActive !== true) continue;
     for (const courseId of plan.courseIds || []) candidateCourseIds.add(courseId);
   }
-  if (candidateCourseIds.size === 0) return courseIds;
+  if (candidateCourseIds.size === 0) return { courseIds };
 
   // Only actually-published courses grant access, regardless of what a
   // plan still references — see doc comment above.
@@ -68,12 +81,19 @@ async function getAccessibleCourseIds(userId) {
 
   // A future course is visible in the dedicated Upcoming Courses feed but
   // must not grant lesson/content access before its scheduled start.
-  // Courses without a start_at remain immediately accessible.
+  // Courses without a start_at remain immediately accessible (and never
+  // count as "upcoming").
   const now = Date.now();
   for (const course of rows(coursesData)) {
-    if (!course.startAt || new Date(course.startAt).getTime() <= now) courseIds.add(course.id);
+    const isFuture = !!course.startAt && new Date(course.startAt).getTime() > now;
+    if (excludeFuture ? !isFuture : isFuture) courseIds.add(course.id);
   }
 
+  return { courseIds };
+}
+
+async function getUpcomingCourseIds(userId) {
+  const { courseIds } = await getPlanLinkedPublishedCourses(userId, { excludeFuture: false });
   return courseIds;
 }
 
@@ -102,4 +122,4 @@ async function userCanAccessContent(userId, content) {
   return userCanAccessCourse(userId, content.courseId);
 }
 
-module.exports = { getAccessibleCourseIds, userCanAccessCourse, userCanAccessContent };
+module.exports = { getAccessibleCourseIds, getUpcomingCourseIds, userCanAccessCourse, userCanAccessContent };
