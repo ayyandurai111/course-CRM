@@ -257,7 +257,23 @@ router.post("/", authenticate, requireAdmin, uploadLimiter, uploadGate, upload.s
       await uploadFile(tempPath, storagePath, req.file.mimetype);
     } catch (uploadErr) {
       if (quotaReserved) {
-        await supabase.rpc("release_upload_quota", { p_user_id: req.user.id, p_bytes: req.file.size }).catch(() => {});
+        // supabase.rpc(...) returns a PostgrestFilterBuilder, which is
+        // "thenable" (supports await) but does NOT implement a real
+        // .catch() method — chaining .catch() directly on it throws
+        // "supabase.rpc(...).catch is not a function" and, worse,
+        // *replaces* uploadErr below with that TypeError, hiding the
+        // actual upload failure. Wrap it in a real try/catch instead.
+        try {
+          const { error: releaseError } = await supabase.rpc("release_upload_quota", {
+            p_user_id: req.user.id,
+            p_bytes: req.file.size,
+          });
+          if (releaseError) {
+            console.error("[upload] release_upload_quota failed:", releaseError.message);
+          }
+        } catch (releaseErr) {
+          console.error("[upload] release_upload_quota threw:", releaseErr);
+        }
       }
       throw uploadErr;
     }
