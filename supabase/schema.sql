@@ -28,9 +28,25 @@ create table if not exists public.users (
   avatar_url text,
   role text not null default 'STUDENT' check (role in ('STUDENT', 'ADMIN')),
   is_active boolean not null default true,
+  -- Spec fix — "deleted user recreation": set true the moment an admin
+  -- requests deletion, BEFORE the Supabase Auth account deletion is
+  -- attempted. Combined with `is_active = false` (set at the same
+  -- time), this cuts off access immediately regardless of whether the
+  -- Auth deletion call below succeeds. This row is only ever hard-
+  -- deleted by Postgres's own `on delete cascade` above, which fires
+  -- automatically once the *auth.users* row is actually deleted — so a
+  -- profile can never be recreated by get_or_create_user_profile() for
+  -- an id that still exists here with pending_deletion = true (the
+  -- `on conflict (id) do nothing` in that function just returns the
+  -- existing, still-inactive row), and once this row IS truly gone the
+  -- corresponding Auth identity is gone too, so no new session can ever
+  -- present that same user id again. See jobs/userDeletionRetryJob.js
+  -- for the retry of the Auth-side deletion when it fails immediately.
+  pending_deletion boolean not null default false,
   created_at timestamptz not null default now()
 );
 create index if not exists users_role_idx on public.users (role);
+create index if not exists users_pending_deletion_idx on public.users (pending_deletion) where pending_deletion = true;
 
 -- ---------------------------------------------------------------------
 -- courses
@@ -318,9 +334,7 @@ begin
   end if;
 
   if p_new_role not in ('STUDENT', 'ADMIN') then
-    raise exception using
-      message = 'Unsupported role: ' || p_new_role,
-      errcode = '22023';
+    raise exception 'Unsupported role %', p_new_role using errcode = '22023'; -- invalid_parameter_value
   end if;
 
   select * into v_actor from public.users where id = p_actor_id;
@@ -328,7 +342,7 @@ begin
     raise exception 'Actor % does not exist', p_actor_id;
   end if;
   if v_actor.role <> 'ADMIN' or v_actor.is_active is not true then
-    raise exception 'Actor % is not an active admin', p_actor_id using errcode = '42501'; -- insufficient_privilege
+    raise exception 'Actor % is not an active admin' using errcode = '42501'; -- insufficient_privilege
   end if;
 
   if p_actor_id = p_target_id then
@@ -403,6 +417,81 @@ $$;
 
 revoke execute on function public.publish_due_scheduled_content() from public, anon, authenticated;
 grant execute on function public.publish_due_scheduled_content() to service_role;
+
+-- ---------------------------------------------------------------------
+-- publish_content_atomic — closes the content-publish race condition.
+--
+-- Previously, publishing a content item was a check-then-act sequence
+-- entirely in application code: read the row, check the Storage object
+-- exists, THEN write status='PUBLISHED' as a separate later operation.
+-- A concurrent request (another publish, a content update that swaps
+-- fileKey/courseId/type, or a delete) could change or remove the file
+-- in the gap between the Storage check and the write, letting an
+-- invalid/inconsistent record become PUBLISHED.
+--
+-- This function is the final, atomic commit step: it takes a row lock
+-- (`for update`) on the content row and re-verifies, from the DATABASE
+-- itself, that courseId/type/fileKey are still EXACTLY what the caller
+-- already validated (including the Storage existence check, which must
+-- still happen in application code beforehand — Supabase Storage is not
+-- transactional with Postgres, spec requirement). Only if nothing
+-- changed underneath the caller does it flip the row to PUBLISHED, all
+-- inside one transaction. Two concurrent publish attempts, or a publish
+-- racing a content update/delete, serialize on the row lock — the
+-- loser sees the row it locked no longer matches what it expected and
+-- fails loudly (CONTENT_CHANGED) instead of silently publishing a
+-- record whose file may have just been swapped out from under it.
+-- ---------------------------------------------------------------------
+create or replace function public.publish_content_atomic(
+  p_content_id uuid,
+  p_expected_course_id uuid,
+  p_expected_type text,
+  p_expected_file_key text
+) returns setof public.content
+language plpgsql
+security definer
+set search_path = public
+as $$
+declare
+  v_row public.content%rowtype;
+begin
+  if p_content_id is null then
+    raise exception 'p_content_id is required';
+  end if;
+
+  select * into v_row from public.content where id = p_content_id for update;
+  if not found then
+    raise exception 'Content % not found', p_content_id using errcode = 'P0002'; -- no_data_found
+  end if;
+
+  -- Re-verify the EXACT record this publish was authorized against
+  -- (including the Storage-existence-checked fileKey) has not been
+  -- changed by a concurrent request. `is distinct from` treats
+  -- null = null as "not changed", so content with no file at all still
+  -- compares correctly.
+  if v_row.course_id is distinct from p_expected_course_id
+     or v_row.type is distinct from p_expected_type
+     or v_row.file_key is distinct from p_expected_file_key then
+    raise exception 'Content % was modified concurrently and can no longer be published as validated; please retry', p_content_id
+      using errcode = '40001'; -- serialization_failure
+  end if;
+
+  if v_row.status not in ('DRAFT', 'SCHEDULED', 'UNPUBLISHED') then
+    raise exception 'Cannot move content from % to PUBLISHED', v_row.status using errcode = '23514'; -- check_violation
+  end if;
+
+  update public.content
+    set status = 'PUBLISHED', published_at = now(), scheduled_at = null, updated_at = now()
+    where id = p_content_id
+    returning * into v_row;
+
+  return next v_row;
+  return;
+end;
+$$;
+
+revoke execute on function public.publish_content_atomic(uuid, uuid, text, text) from public, anon, authenticated;
+grant execute on function public.publish_content_atomic(uuid, uuid, text, text) to service_role;
 
 -- ---------------------------------------------------------------------
 -- storage_cleanup_queue — durable record of Storage objects that still
@@ -490,6 +579,62 @@ revoke execute on function public.delete_course_cascade(uuid) from public, anon,
 grant execute on function public.delete_course_cascade(uuid) to service_role;
 
 -- ---------------------------------------------------------------------
+-- delete_content_cascade — the same durable-queue pattern as
+-- delete_course_cascade, but for deleting a single content item.
+--
+-- Previously (spec fix target), content deletion deleted the Storage
+-- object FIRST and the database row second. If the Storage delete
+-- succeeded but the subsequent DB delete failed (crash, DB outage,
+-- constraint issue), the database was left with a row whose fileKey
+-- pointed at a Storage object that no longer existed — a permanent
+-- orphaned reference with no automatic way to notice or repair it.
+--
+-- This function flips the order and makes the DB change authoritative:
+-- it locks the content row, queues its file (if any) into
+-- storage_cleanup_queue, and deletes the row, all in one transaction.
+-- The caller (content.routes.js) then makes a best-effort immediate
+-- Storage delete; anything that fails just stays PENDING/FAILED in the
+-- queue for the existing retry job (storageCleanupRetryJob.js) to pick
+-- up later — so a Storage failure can never leave a dangling DB
+-- reference, and worst case is a temporarily-orphaned Storage object
+-- that the retry job will still clean up.
+-- ---------------------------------------------------------------------
+create or replace function public.delete_content_cascade(p_content_id uuid)
+returns table (queue_id uuid, file_key text)
+language plpgsql
+security definer
+set search_path = public
+as $$
+declare
+  v_content public.content%rowtype;
+begin
+  if p_content_id is null then
+    raise exception 'p_content_id is required';
+  end if;
+
+  select * into v_content from public.content where id = p_content_id for update;
+  if not found then
+    raise exception 'Content % does not exist', p_content_id using errcode = 'P0002';
+  end if;
+
+  if v_content.file_key is not null then
+    insert into public.storage_cleanup_queue (file_key, course_id, content_id, reason)
+    values (v_content.file_key, v_content.course_id, v_content.id, 'content_delete');
+  end if;
+
+  delete from public.content where id = p_content_id;
+
+  return query
+    select q.id, q.file_key from public.storage_cleanup_queue q
+      where q.content_id = p_content_id and q.reason = 'content_delete' and q.status = 'PENDING'
+      order by q.created_at;
+end;
+$$;
+
+revoke execute on function public.delete_content_cascade(uuid) from public, anon, authenticated;
+grant execute on function public.delete_content_cascade(uuid) to service_role;
+
+-- ---------------------------------------------------------------------
 -- get_or_create_user_profile — atomic replacement for the old
 -- SELECT-then-INSERT first-login flow in middleware/auth.js. Two
 -- simultaneous first-login requests for the same brand-new auth user
@@ -499,18 +644,46 @@ grant execute on function public.delete_course_cascade(uuid) to service_role;
 -- race, and no risk of a second call overwriting an existing user's
 -- role/is_active/created_at.
 --
--- Security: role is always hard-coded to 'STUDENT' in the insert
--- branch — this function has no parameter for role at all, so it is
--- structurally impossible for a caller (even a compromised client that
--- somehow reached this RPC name) to create an ADMIN via first login.
--- The first ADMIN is instead created deliberately via
--- bootstrap_first_admin() below, which is not part of the login path.
+-- Seed-admin auto-promotion (server-side only, by design):
+--   role is ADMIN if-and-only-if p_email case/whitespace-insensitively
+--   equals p_seed_admin_email (the operator's SEED_ADMIN_EMAIL env var,
+--   passed in by middleware/auth.js — never by the frontend), otherwise
+--   STUDENT. p_email itself comes from authUser.email in auth.js, which
+--   in turn comes from supabase.auth.getUser(accessToken) — a
+--   server-side call that verifies the JWT against Supabase Auth, so
+--   this is the OAuth-provider-verified email, never anything the
+--   client could spoof in a request body. The frontend has no input
+--   into this decision at all.
+--
+--   This check only ever runs inside the INSERT's VALUES clause, which
+--   `on conflict (id) do nothing` skips entirely once a row already
+--   exists — so this only ever fires on a user's very first login, and
+--   can never silently re-promote or demote an existing profile just
+--   because SEED_ADMIN_EMAIL happens to still be set (e.g. an admin who
+--   later demotes this account via the admin panel stays demoted on
+--   their next login; SEED_ADMIN_EMAIL is not re-checked after the
+--   profile row already exists).
+--
+--   Operational note: unlike bootstrap_first_admin() below, this has NO
+--   "only while zero admins exist" guard and needs none — it's not a
+--   race between different people claiming a scarce first-admin slot,
+--   it's a fixed, operator-configured email that is always promoted on
+--   its first login, by design. The actual security boundary is simply
+--   "whoever controls the SEED_ADMIN_EMAIL mailbox/Google account is the
+--   admin" — keep that env var pointed at an address you trust, and
+--   note that anyone who successfully authenticates as it via Google
+--   (or whatever the configured Auth provider is) gets ADMIN with no
+--   further gate. bootstrap_first_admin()/ADMIN_BOOTSTRAP_TOKEN remains
+--   available as a separate, token-gated path for promoting additional
+--   admins later without touching SEED_ADMIN_EMAIL.
 -- ---------------------------------------------------------------------
+drop function if exists public.get_or_create_user_profile(uuid, text, text, text);
 create or replace function public.get_or_create_user_profile(
   p_user_id uuid,
   p_email text,
   p_name text,
-  p_avatar_url text
+  p_avatar_url text,
+  p_seed_admin_email text default null
 ) returns public.users
 language plpgsql
 security definer
@@ -518,13 +691,26 @@ set search_path = public
 as $$
 declare
   v_user public.users%rowtype;
+  v_role text;
 begin
   if p_user_id is null then
     raise exception 'p_user_id is required';
   end if;
 
+  -- Case/whitespace-insensitive match against the operator-configured
+  -- seed admin email (see doc comment above for the full rationale).
+  -- A null/blank p_seed_admin_email (SEED_ADMIN_EMAIL unset) always
+  -- yields STUDENT, same as before this feature existed.
+  if p_seed_admin_email is not null
+     and length(trim(p_seed_admin_email)) > 0
+     and lower(trim(p_email)) = lower(trim(p_seed_admin_email)) then
+    v_role := 'ADMIN';
+  else
+    v_role := 'STUDENT';
+  end if;
+
   insert into public.users (id, email, name, avatar_url, role, is_active)
-    values (p_user_id, coalesce(p_email, ''), coalesce(p_name, ''), p_avatar_url, 'STUDENT', true)
+    values (p_user_id, coalesce(p_email, ''), coalesce(p_name, ''), p_avatar_url, v_role, true)
   on conflict (id) do nothing;
 
   select * into v_user from public.users where id = p_user_id;
@@ -532,8 +718,8 @@ begin
 end;
 $$;
 
-revoke execute on function public.get_or_create_user_profile(uuid, text, text, text) from public, anon, authenticated;
-grant execute on function public.get_or_create_user_profile(uuid, text, text, text) to service_role;
+revoke execute on function public.get_or_create_user_profile(uuid, text, text, text, text) from public, anon, authenticated;
+grant execute on function public.get_or_create_user_profile(uuid, text, text, text, text) to service_role;
 
 -- ---------------------------------------------------------------------
 -- bootstrap_first_admin — secure, one-time admin bootstrap. Deliberately

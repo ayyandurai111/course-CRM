@@ -33,10 +33,14 @@ export default function ContentFormModal({
   async function uploadFile(): Promise<{ contentId: string; fileKey: string; fileSizeBytes: number } | null> {
     if (!file || !courseId) return null;
     setUploadProgress("Uploading file…");
+    // Field order matters here: multer's fileFilter reads req.body.type
+    // the moment it hits the file part in the multipart stream, so the
+    // text fields must be appended (and therefore sent) before the file
+    // field or they won't be parsed yet when fileFilter runs.
     const formData = new FormData();
-    formData.append("file", file);
     formData.append("type", type);
     formData.append("courseId", courseId);
+    formData.append("file", file);
     const res = await apiRequest<{ contentId: string; fileKey: string; fileSizeBytes: number }>(`/upload`, {
       method: "POST",
       body: formData,
