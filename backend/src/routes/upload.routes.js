@@ -287,10 +287,18 @@ router.post("/", authenticate, requireAdmin, uploadLimiter, uploadGate, upload.s
 
 router.use((err, req, res, next) => {
   if (err instanceof multer.MulterError) {
+    console.error("[upload] MulterError:", err.code, err.message, err.field);
     const status = err.code === "LIMIT_FILE_SIZE" ? 413 : 400;
     return res.status(status).json({ error: err.message });
   }
   if (err && err.message && !err.status) {
+    // Logged here (not just left to the global handler) because this
+    // branch intentionally exposes err.message to the client as-is —
+    // if that message ever comes from something other than our own
+    // deliberate validation throws (e.g. a wrapped Supabase/storage
+    // error via assertNoError), we want it visible in server logs too,
+    // not just guessed at from a byte count in the access log.
+    console.error("[upload] 400:", err.message);
     return res.status(400).json({ error: err.message });
   }
   next(err);

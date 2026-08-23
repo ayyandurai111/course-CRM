@@ -27,6 +27,16 @@ const siteContentRoutes = require("./routes/siteContent.routes");
 
 const app = express();
 
+// Render (and most PaaS hosts) puts this app behind a reverse proxy that
+// sets X-Forwarded-For / X-Forwarded-Proto. Without telling Express to
+// trust that proxy, req.ip resolves to the proxy's internal IP for every
+// request — which means express-rate-limit's per-IP buckets (below) are
+// shared across ALL users instead of being per-user, and req.secure /
+// req.protocol are unreliable too. `1` = trust exactly one hop (the
+// platform's own proxy), which is the correct, safe value for a single
+// reverse-proxy deployment like Render's.
+app.set("trust proxy", 1);
+
 // Spec #15B: explicit production CSP instead of relying on helmet()'s
 // defaults. Domains are derived from this deployment's own config
 // rather than hard-coded, so a different Supabase project still gets a
