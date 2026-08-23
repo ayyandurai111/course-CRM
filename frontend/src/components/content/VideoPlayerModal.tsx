@@ -4,6 +4,7 @@ import { apiRequest } from "../../lib/apiClient";
 import type { ContentItem } from "../../types";
 import { ErrorState } from "../common/States";
 import { Skeleton } from "../common/Skeleton";
+import { XIcon } from "../common/Icons";
 
 export default function VideoPlayerModal({ content, onClose }: { content: ContentItem; onClose: () => void }) {
   const { url, error, loading } = useProtectedFile(content.id);
@@ -44,7 +45,7 @@ export default function VideoPlayerModal({ content, onClose }: { content: Conten
         <div className="flex items-center justify-between bg-ink-950 px-4 py-3">
           <p className="truncate text-sm font-medium text-paper-50">{content.title}</p>
           <button onClick={onClose} aria-label="Close video" className="rounded-full p-1.5 text-paper-50 hover:bg-white/10">
-            ✕
+            <XIcon className="h-4 w-4" />
           </button>
         </div>
         <div className="aspect-video w-full bg-black">

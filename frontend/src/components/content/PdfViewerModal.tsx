@@ -4,6 +4,7 @@ import { apiRequest } from "../../lib/apiClient";
 import type { ContentItem } from "../../types";
 import { ErrorState } from "../common/States";
 import { Skeleton } from "../common/Skeleton";
+import { XIcon } from "../common/Icons";
 
 export default function PdfViewerModal({ content, onClose }: { content: ContentItem; onClose: () => void }) {
   const { url, error, loading } = useProtectedFile(content.id);
@@ -30,7 +31,7 @@ export default function PdfViewerModal({ content, onClose }: { content: ContentI
         <div className="flex items-center justify-between border-b border-ink-900/8 px-4 py-3">
           <p className="truncate text-sm font-medium text-ink-900">{content.title}</p>
           <button onClick={onClose} aria-label="Close PDF" className="rounded-full p-1.5 text-ink-500 hover:bg-ink-100">
-            ✕
+            <XIcon className="h-4 w-4" />
           </button>
         </div>
         <div className="flex-1 bg-ink-100">

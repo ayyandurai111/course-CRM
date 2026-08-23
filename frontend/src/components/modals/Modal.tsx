@@ -1,4 +1,5 @@
 import { useEffect } from "react";
+import { XIcon } from "../common/Icons";
 
 export default function Modal({
   title,
@@ -35,7 +36,7 @@ export default function Modal({
         <div className="flex shrink-0 items-center justify-between border-b border-ink-900/8 px-5 py-4 sm:px-6">
           <h2 className="font-display text-lg font-semibold text-ink-950">{title}</h2>
           <button onClick={onClose} aria-label="Close" className="rounded-full p-1.5 text-ink-500 hover:bg-ink-100">
-            ✕
+            <XIcon className="h-4 w-4" />
           </button>
         </div>
         <div className="overflow-y-auto px-5 py-5 sm:px-6">{children}</div>

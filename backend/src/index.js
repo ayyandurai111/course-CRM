@@ -6,11 +6,13 @@ const cors = require("cors");
 const helmet = require("helmet");
 const morgan = require("morgan");
 const rateLimit = require("express-rate-limit");
+const { createRateLimitStore } = require("./lib/rateLimitStore");
 
 const { startPublishScheduler } = require("./jobs/publishScheduler");
 const { startOrphanCleanupJob } = require("./jobs/orphanCleanupJob");
 const { startTempFileCleanup } = require("./jobs/tempFileCleanup");
 const { startStorageCleanupRetryJob } = require("./jobs/storageCleanupRetryJob");
+const { startUserDeletionRetryJob } = require("./jobs/userDeletionRetryJob");
 
 const authRoutes = require("./routes/auth.routes");
 const courseRoutes = require("./routes/courses.routes");
@@ -100,14 +102,18 @@ app.use((req, res, next) => {
   next();
 });
 
-// Generic API rate limit; auth routes get a stricter one below.
+// Generic API rate limit; auth routes get a stricter one below. Store
+// selection (spec #10): per-process by default, shared across
+// instances only if REDIS_URL is configured and the optional Redis
+// packages are installed — see lib/rateLimitStore.js and
+// docs/SCALING.md for the full accounting of what is/isn't global.
 app.use(
   "/api",
-  rateLimit({ windowMs: 15 * 60 * 1000, max: 300, standardHeaders: true, legacyHeaders: false })
+  rateLimit({ windowMs: 15 * 60 * 1000, max: 300, standardHeaders: true, legacyHeaders: false, store: createRateLimitStore("api") })
 );
 app.use(
   "/api/auth",
-  rateLimit({ windowMs: 15 * 60 * 1000, max: 30, standardHeaders: true, legacyHeaders: false })
+  rateLimit({ windowMs: 15 * 60 * 1000, max: 30, standardHeaders: true, legacyHeaders: false, store: createRateLimitStore("auth") })
 );
 
 app.get("/api/health", (req, res) => res.json({ status: "ok", time: new Date().toISOString() }));
@@ -170,12 +176,31 @@ app.use((err, req, res, next) => {
 });
 
 const PORT = process.env.PORT || 4000;
+// Spec fix — "Prepare Rate Limits for Multiple Servers": upload
+// concurrency/temp-disk gating (lib/uploadGate.js) is process-local and
+// has no Redis-backed alternative yet (see that module's doc comment
+// for the full design). If an operator has set REDIS_URL — signaling
+// they've likely scaled this service to multiple instances and wired up
+// shared rate-limit storage — say so loudly at startup rather than
+// silently leaving upload concurrency/byte limits un-shared, since a
+// per-instance-only cap on those specifically means the true aggregate
+// ceiling across instances is (limit × instance count).
+if (process.env.REDIS_URL) {
+  console.warn(
+    "[startup] REDIS_URL is set (rate limiters will use it if the optional ioredis/rate-limit-redis " +
+      "packages are installed — see lib/rateLimitStore.js). NOTE: upload concurrency and temp-disk-byte " +
+      "limits in lib/uploadGate.js are still process-local ONLY and are not yet backed by Redis — if this " +
+      "service runs more than one instance, those two specific limits are enforced per-instance, not " +
+      "globally. See docs/SCALING.md."
+  );
+}
 const server = app.listen(PORT, () => {
   console.log(`Course CRM API listening on port ${PORT}`);
   startPublishScheduler();
   startOrphanCleanupJob();
   startTempFileCleanup();
   startStorageCleanupRetryJob();
+  startUserDeletionRetryJob();
 });
 
 // Idle-connection / header timeouts (spec #3D). Node's own

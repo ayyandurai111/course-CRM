@@ -318,7 +318,9 @@ begin
   end if;
 
   if p_new_role not in ('STUDENT', 'ADMIN') then
-    raise exception 'Unsupported role %', p_new_role using errcode = '22023'; -- invalid_parameter_value
+    raise exception using
+      message = 'Unsupported role: ' || p_new_role,
+      errcode = '22023';
   end if;
 
   select * into v_actor from public.users where id = p_actor_id;
@@ -326,7 +328,7 @@ begin
     raise exception 'Actor % does not exist', p_actor_id;
   end if;
   if v_actor.role <> 'ADMIN' or v_actor.is_active is not true then
-    raise exception 'Actor % is not an active admin' using errcode = '42501'; -- insufficient_privilege
+    raise exception 'Actor % is not an active admin', p_actor_id using errcode = '42501'; -- insufficient_privilege
   end if;
 
   if p_actor_id = p_target_id then

@@ -4,7 +4,9 @@ const { supabase, row, rows, assertNoError } = require("../lib/db");
 const { authenticate, requireAdmin } = require("../middleware/auth");
 const { logAction } = require("../services/auditService");
 const { getCurrentSubscriptionsByUserIds } = require("../services/subscriptionService");
+const { beginStudentDeletion } = require("../services/userDeletionService");
 const { containsPattern } = require("../lib/searchFilter");
+const { parseValidDate } = require("../lib/dateValidation");
 
 const router = express.Router();
 
@@ -152,8 +154,15 @@ router.post("/:id/subscription", authenticate, requireAdmin, async (req, res, ne
     if (!parsed.success) return res.status(400).json({ error: parsed.error.errors[0].message });
 
     const { planId, expiresAt } = parsed.data;
-    if (expiresAt && new Date(expiresAt) <= new Date()) {
-      return res.status(400).json({ error: "expiresAt must be in the future." });
+    // expiresAt already passed zod's .datetime() format check above, but
+    // route the future-date comparison through the same shared helper
+    // used everywhere else (spec fix — never compare a possibly-invalid
+    // Date directly; see lib/dateValidation.js).
+    if (expiresAt) {
+      const parsedExpiry = parseValidDate(expiresAt);
+      if (!parsedExpiry || parsedExpiry.getTime() <= Date.now()) {
+        return res.status(400).json({ error: "expiresAt must be a valid date/time in the future." });
+      }
     }
 
     const student = await loadStudentOrThrow(req.params.id);
@@ -237,27 +246,31 @@ router.patch("/:id/status", authenticate, requireAdmin, async (req, res, next) =
   }
 });
 
-// Permanently delete a student: profile row (subscriptions + progress
-// cascade via FK — see supabase/schema.sql), and the underlying
-// Supabase Auth account.
+// Permanently delete a student. Spec fix — "deleted user recreation":
+// this used to delete the database profile row FIRST and the Supabase
+// Auth account second; if the Auth deletion then failed, the (still
+// live) Auth account could log back in and get_or_create_user_profile()
+// would silently recreate a brand-new STUDENT profile for it. Deletion
+// now goes through beginStudentDeletion() (services/userDeletionService.js),
+// which marks the profile inactive/pending-deletion BEFORE attempting
+// Auth deletion, so access is cut off immediately either way, and the
+// profile can never be recreated — see that module's doc comment for
+// the full ordering rationale. If the Auth deletion doesn't succeed
+// immediately, it's retried by the scheduled job in
+// jobs/userDeletionRetryJob.js until it does.
 router.delete("/:id", authenticate, requireAdmin, async (req, res, next) => {
   try {
     await loadStudentOrThrow(req.params.id);
 
-    // Deleting the `users` row cascades to subscriptions and
-    // content_progress via ON DELETE CASCADE foreign keys.
-    const { error } = await supabase.from("users").delete().eq("id", req.params.id);
-    assertNoError(error, "Failed to delete student profile");
+    const { immediatelyDeleted } = await beginStudentDeletion(req.params.id);
 
-    try {
-      await supabase.auth.admin.deleteUser(req.params.id);
-    } catch (err) {
-      // Account may already be gone from Supabase Auth — profile
-      // cleanup above still succeeded, so don't fail the request.
-      console.error("Failed to delete Supabase Auth user:", err);
-    }
-
-    await logAction({ actorId: req.user.id, action: "student.delete", entityType: "User", entityId: req.params.id });
+    await logAction({
+      actorId: req.user.id,
+      action: "student.delete",
+      entityType: "User",
+      entityId: req.params.id,
+      metadata: { immediatelyDeleted },
+    });
     res.status(204).send();
   } catch (err) {
     next(err);

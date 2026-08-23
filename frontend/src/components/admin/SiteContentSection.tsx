@@ -5,6 +5,7 @@ import type { SiteContent, FeatureItem, FaqItem } from "../../types";
 import { ErrorState } from "../common/States";
 import { FormSectionsSkeleton, Skeleton } from "../common/Skeleton";
 import { Field, inputClass } from "../forms/FormFields";
+import { ExternalLinkIcon, CheckIcon, PlusIcon } from "../common/Icons";
 
 function SectionCard({ title, description, children }: { title: string; description?: string; children: React.ReactNode }) {
   return (
@@ -105,8 +106,14 @@ export default function SiteContentSection() {
           <h1 className="font-display text-xl font-semibold text-ink-950">Site content</h1>
           <p className="mt-1 text-sm text-ink-500">Edit the copy shown on your public landing page.</p>
         </div>
-        <a href="/" target="_blank" rel="noreferrer" className="text-sm font-medium text-ink-700 hover:text-ink-950">
-          View live site ↗
+        <a
+          href="/"
+          target="_blank"
+          rel="noreferrer"
+          className="inline-flex items-center gap-1.5 text-sm font-medium text-ink-700 hover:text-ink-950"
+        >
+          View live site
+          <ExternalLinkIcon className="h-3.5 w-3.5" />
         </a>
       </div>
 
@@ -188,8 +195,9 @@ export default function SiteContentSection() {
               </div>
             ))}
           </div>
-          <button onClick={addFeatureItem} className="mt-3 text-sm font-medium text-ink-700 hover:text-ink-950">
-            + Add feature
+          <button onClick={addFeatureItem} className="mt-3 inline-flex items-center gap-1.5 text-sm font-medium text-ink-700 hover:text-ink-950">
+            <PlusIcon className="h-4 w-4" />
+            Add feature
           </button>
         </SectionCard>
 
@@ -238,8 +246,9 @@ export default function SiteContentSection() {
               </div>
             ))}
           </div>
-          <button onClick={addFaqItem} className="mt-3 text-sm font-medium text-ink-700 hover:text-ink-950">
-            + Add question
+          <button onClick={addFaqItem} className="mt-3 inline-flex items-center gap-1.5 text-sm font-medium text-ink-700 hover:text-ink-950">
+            <PlusIcon className="h-4 w-4" />
+            Add question
           </button>
         </SectionCard>
 
@@ -260,7 +269,12 @@ export default function SiteContentSection() {
 
       <div className="fixed bottom-0 left-0 right-0 z-20 border-t border-ink-900/8 bg-white/95 px-5 py-3 backdrop-blur md:pl-56">
         <div className="mx-auto flex max-w-4xl items-center justify-end gap-3">
-          {saved && <span className="text-sm font-medium text-emerald-600">Saved ✓</span>}
+          {saved && (
+            <span className="inline-flex items-center gap-1.5 text-sm font-medium text-emerald-600">
+              <CheckIcon className="h-4 w-4" />
+              Saved
+            </span>
+          )}
           <button
             onClick={handleSave}
             disabled={saving}

@@ -32,12 +32,6 @@ export default function DashboardHeader({ subscription }: { subscription: Subscr
         </div>
 
         <div className="flex items-center gap-3">
-          <button
-            aria-label="Notifications"
-            className="rounded-full p-2 text-ink-500 hover:bg-ink-100"
-          >
-            🔔
-          </button>
           <div className="relative">
             <button
               onClick={() => setMenuOpen((o) => !o)}

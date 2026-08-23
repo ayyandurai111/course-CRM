@@ -1,6 +1,7 @@
 const { supabase, row, toSnake, assertNoError } = require("../lib/db");
 const { fileExists } = require("../lib/storage");
 const { isValidContentFileKey, parseStoragePath } = require("../lib/fileValidation");
+const { parseValidDate } = require("../lib/dateValidation");
 
 /**
  * Valid transitions for the content publication state machine.
@@ -50,6 +51,22 @@ class FileOwnershipError extends Error {
   constructor(message, status = 400) {
     super(message);
     this.status = status;
+  }
+}
+
+/**
+ * Thrown when the atomic publish commit (publish_content_atomic RPC)
+ * discovers that the content row changed between the moment this
+ * request validated it (including the Storage existence check) and the
+ * moment it tried to commit PUBLISHED — i.e. a genuine concurrent
+ * modification was caught and rejected rather than silently allowed to
+ * produce an inconsistent published record. The caller should treat
+ * this like any other optimistic-concurrency conflict: safe to retry.
+ */
+class PublishConflictError extends Error {
+  constructor(contentId) {
+    super(`Content ${contentId} was modified concurrently and could not be published as validated. Please retry.`);
+    this.status = 409;
   }
 }
 
@@ -164,22 +181,79 @@ async function assertFileReadyToPublish(content) {
   if (!exists) throw new FileMissingError(content.id);
 }
 
+/**
+ * Commits the actual PUBLISHED transition via the atomic
+ * publish_content_atomic() Postgres function (see supabase/schema.sql).
+ * `content` must be a snapshot that has ALREADY passed
+ * assertFileReadyToPublish() (ownership consistency + the Storage
+ * existence check) — this function re-verifies that exact snapshot is
+ * still current, atomically, at commit time, and fails with
+ * PublishConflictError if anything about it (courseId/type/fileKey)
+ * changed in between. This is the fix for the publish race condition:
+ * the window between "we checked the file exists" and "we wrote
+ * PUBLISHED" is now closed by a row-locked, compare-and-swap commit
+ * instead of an unconditional blind write.
+ */
+/** Pure — the arguments this content's snapshot must send to publish_content_atomic(). */
+function buildPublishRpcArgs(content) {
+  return {
+    p_content_id: content.id,
+    p_expected_course_id: content.courseId,
+    p_expected_type: content.type,
+    p_expected_file_key: content.fileKey || null,
+  };
+}
+
+/**
+ * Pure — translates a Postgres errcode from publish_content_atomic()
+ * into the right typed application error. Kept separate from
+ * commitPublish so this mapping is unit-testable without a live DB.
+ */
+function mapPublishRpcError(error, content) {
+  if (error.code === "40001") return new PublishConflictError(content.id);
+  if (error.code === "P0002") return new NotFoundError(content.id);
+  if (error.code === "23514") return new InvalidTransitionError(content.status, "PUBLISHED");
+  const err = new Error(`Failed to publish content: ${error.message}`);
+  err.cause = error;
+  return err;
+}
+
+async function commitPublish(content) {
+  const { data, error } = await supabase.rpc("publish_content_atomic", buildPublishRpcArgs(content));
+  if (error) throw mapPublishRpcError(error, content);
+
+  const published = Array.isArray(data) ? data[0] : data;
+  if (!published) throw new NotFoundError(content.id);
+  return row(published);
+}
+
 async function publishNow(contentId) {
   const content = await getContentOrThrow(contentId);
   assertTransition(content.status, "PUBLISHED");
   await assertFileReadyToPublish(content);
-  return applyUpdate(contentId, { status: "PUBLISHED", publishedAt: new Date(), scheduledAt: null });
+  return commitPublish(content);
 }
 
 async function schedule(contentId, scheduledAt) {
   const content = await getContentOrThrow(contentId);
-  if (new Date(scheduledAt) <= new Date()) {
+  // Spec fix — see lib/dateValidation.js doc comment: never compare a
+  // possibly-invalid Date. This is a defense-in-depth check — the
+  // /schedule route already validates scheduledAt with zod before
+  // calling here — so this service can never be tricked into scheduling
+  // invalid or past-dated content even if called from elsewhere.
+  const parsedDate = parseValidDate(scheduledAt);
+  if (!parsedDate) {
+    const err = new Error("scheduledAt must be a valid date/time.");
+    err.status = 400;
+    throw err;
+  }
+  if (parsedDate.getTime() <= Date.now()) {
     const err = new Error("scheduledAt must be in the future.");
     err.status = 400;
     throw err;
   }
   assertTransition(content.status, "SCHEDULED");
-  return applyUpdate(contentId, { status: "SCHEDULED", scheduledAt: new Date(scheduledAt) });
+  return applyUpdate(contentId, { status: "SCHEDULED", scheduledAt: parsedDate });
 }
 
 async function reschedule(contentId, scheduledAt) {
@@ -189,12 +263,18 @@ async function reschedule(contentId, scheduledAt) {
     err.status = 400;
     throw err;
   }
-  if (new Date(scheduledAt) <= new Date()) {
+  const parsedDate = parseValidDate(scheduledAt);
+  if (!parsedDate) {
+    const err = new Error("scheduledAt must be a valid date/time.");
+    err.status = 400;
+    throw err;
+  }
+  if (parsedDate.getTime() <= Date.now()) {
     const err = new Error("scheduledAt must be in the future.");
     err.status = 400;
     throw err;
   }
-  return applyUpdate(contentId, { scheduledAt: new Date(scheduledAt) });
+  return applyUpdate(contentId, { scheduledAt: parsedDate });
 }
 
 async function unpublish(contentId) {
@@ -232,6 +312,7 @@ async function publishDueScheduledContent() {
 
   let publishedCount = 0;
   let skippedMissingFile = 0;
+  let skippedConflict = 0;
   for (const content of due) {
     try {
       await assertFileReadyToPublish(content);
@@ -240,10 +321,23 @@ async function publishDueScheduledContent() {
       console.error(`[publishDueScheduledContent] Skipping content ${content.id}: file not found in storage.`);
       continue;
     }
-    await applyUpdate(content.id, { status: "PUBLISHED", publishedAt: new Date() });
-    publishedCount += 1;
+    try {
+      // Same atomic, race-safe commit as the manual publish path — an
+      // admin editing this exact item (new file, course move, etc.) at
+      // the same moment the scheduler wakes up is caught here too,
+      // instead of the scheduler blindly overwriting status.
+      await commitPublish(content);
+      publishedCount += 1;
+    } catch (err) {
+      if (err instanceof PublishConflictError) {
+        skippedConflict += 1;
+        console.error(`[publishDueScheduledContent] Skipping content ${content.id}: modified concurrently, will retry next run.`);
+        continue;
+      }
+      throw err;
+    }
   }
-  return { publishedCount, skippedMissingFile };
+  return { publishedCount, skippedMissingFile, skippedConflict };
 }
 
 module.exports = {
@@ -252,10 +346,14 @@ module.exports = {
   NotFoundError,
   FileMissingError,
   FileOwnershipError,
+  PublishConflictError,
   assertTransition,
   getContentOrThrow,
   resolveContentUpdateFileKey,
   assertFileOwnershipConsistent,
+  buildPublishRpcArgs,
+  mapPublishRpcError,
+  commitPublish,
   publishNow,
   schedule,
   reschedule,

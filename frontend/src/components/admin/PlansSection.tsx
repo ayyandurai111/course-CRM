@@ -4,6 +4,7 @@ import type { Plan } from "../../types";
 import { ErrorState, EmptyState } from "../common/States";
 import { PlanCardsSkeleton } from "../common/Skeleton";
 import PlanFormModal from "./PlanFormModal";
+import { PlusIcon } from "../common/Icons";
 
 type AdminPlan = Plan & { _count: { subscriptions: number } };
 
@@ -50,9 +51,10 @@ export default function PlansSection() {
         <h1 className="font-display text-xl font-semibold text-ink-950">Plans</h1>
         <button
           onClick={() => setEditing("new")}
-          className="rounded-full bg-ink-950 px-4 py-2 text-sm font-semibold text-paper-50 hover:bg-ink-900"
+          className="inline-flex items-center gap-1.5 rounded-full bg-ink-950 px-4 py-2 text-sm font-semibold text-paper-50 hover:bg-ink-900"
         >
-          + Add plan
+          <PlusIcon className="h-4 w-4" />
+          Add plan
         </button>
       </div>
 
@@ -63,8 +65,9 @@ export default function PlansSection() {
           title="No plans yet"
           description="Create a plan and attach courses to it so students can subscribe."
           action={
-            <button onClick={() => setEditing("new")} className="rounded-full bg-ink-950 px-4 py-2 text-sm font-semibold text-paper-50">
-              + Add plan
+            <button onClick={() => setEditing("new")} className="inline-flex items-center gap-1.5 rounded-full bg-ink-950 px-4 py-2 text-sm font-semibold text-paper-50">
+              <PlusIcon className="h-4 w-4" />
+              Add plan
             </button>
           }
         />

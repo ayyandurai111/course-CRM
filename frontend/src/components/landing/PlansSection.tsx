@@ -4,6 +4,7 @@ import { apiRequest, ApiError } from "../../lib/apiClient";
 import type { Plan, SiteContent } from "../../types";
 import { ErrorState, EmptyState } from "../common/States";
 import { PlanCardsSkeleton } from "../common/Skeleton";
+import { CheckIcon } from "../common/Icons";
 
 function formatPrice(cents: number, currency: string, period: Plan["billingPeriod"]) {
   const amount = (cents / 100).toLocaleString(undefined, { style: "currency", currency });
@@ -71,7 +72,7 @@ export default function PlansSection({ content }: { content: SiteContent["plansS
                 <ul className="mt-5 flex-1 space-y-2 text-sm">
                   {plan.features.map((f) => (
                     <li key={f} className="flex items-start gap-2">
-                      <span className={plan.isPopular ? "text-amber-400" : "text-amber-600"}>✓</span>
+                      <CheckIcon className={`mt-0.5 h-4 w-4 shrink-0 ${plan.isPopular ? "text-amber-400" : "text-amber-600"}`} />
                       <span>{f}</span>
                     </li>
                   ))}

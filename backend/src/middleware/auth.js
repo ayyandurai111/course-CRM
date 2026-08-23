@@ -6,11 +6,21 @@ const { row, assertNoError } = require("../lib/db");
  * the service-role client's auth.getUser(), which validates the JWT
  * server-side), then loads the matching `users` profile row (role,
  * isActive, etc.) and attaches it to req.user. If this is the user's
- * first request (no profile row yet), a STUDENT profile is created
+ * first request (no profile row yet), a profile is created
  * automatically — this is what makes "sign in with Google" work with
  * zero separate registration step, same as the old Firebase version.
- * The first ADMIN is created separately via POST /api/auth/bootstrap-admin
- * (see bootstrap_first_admin() in supabase/schema.sql) — never here.
+ *
+ * Seed-admin auto-promotion: the new profile's role is decided entirely
+ * server-side, inside get_or_create_user_profile() (see
+ * supabase/schema.sql) — it's ADMIN if-and-only-if `authUser.email`
+ * (the Google-OAuth-verified email Supabase itself just validated two
+ * lines above, not anything from the request body) matches the
+ * operator's SEED_ADMIN_EMAIL env var, otherwise STUDENT. The frontend
+ * has no say in this at all: it never sees SEED_ADMIN_EMAIL, never
+ * sends a role, and the decision is made and persisted by the Postgres
+ * function before this middleware ever reads the row back. See that
+ * function's doc comment for the full security rationale and the
+ * "only fires on first login" guarantee.
  *
  * Spec #10: profile lookup-or-create goes through the
  * get_or_create_user_profile() Postgres function (see
@@ -44,6 +54,10 @@ async function authenticate(req, res, next) {
       p_email: authUser.email || "",
       p_name: meta.full_name || meta.name || authUser.email?.split("@")[0] || "New user",
       p_avatar_url: meta.avatar_url || meta.picture || null,
+      // Server-only env var — never sent to or read from the frontend.
+      // See doc comment above / get_or_create_user_profile()'s comment
+      // in schema.sql for exactly how this is used.
+      p_seed_admin_email: process.env.SEED_ADMIN_EMAIL || null,
     });
     assertNoError(error, "Failed to load or create user profile");
     if (!profile) {

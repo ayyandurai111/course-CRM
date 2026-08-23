@@ -7,6 +7,7 @@ import StatusPill from "../common/StatusPill";
 import ContentTypeBadge from "../common/ContentTypeBadge";
 import ContentFormModal from "./ContentFormModal";
 import ScheduleModal from "./ScheduleModal";
+import { MoreVerticalIcon, PlusIcon } from "../common/Icons";
 
 // Only these actions are ever valid for a given status (mirrors backend
 // contentService transitions) — the row menu never offers a dead end.
@@ -89,9 +90,10 @@ export default function ContentSection() {
         <h1 className="font-display text-xl font-semibold text-ink-950">Content</h1>
         <button
           onClick={() => setEditing("new")}
-          className="rounded-full bg-ink-950 px-4 py-2 text-sm font-semibold text-paper-50 hover:bg-ink-900"
+          className="inline-flex items-center gap-1.5 rounded-full bg-ink-950 px-4 py-2 text-sm font-semibold text-paper-50 hover:bg-ink-900"
         >
-          + Add content
+          <PlusIcon className="h-4 w-4" />
+          Add content
         </button>
       </div>
 
@@ -132,8 +134,9 @@ export default function ContentSection() {
         <EmptyState
           title="No content matches these filters"
           action={
-            <button onClick={() => setEditing("new")} className="rounded-full bg-ink-950 px-4 py-2 text-sm font-semibold text-paper-50">
-              + Add content
+            <button onClick={() => setEditing("new")} className="inline-flex items-center gap-1.5 rounded-full bg-ink-950 px-4 py-2 text-sm font-semibold text-paper-50">
+              <PlusIcon className="h-4 w-4" />
+              Add content
             </button>
           }
         />
@@ -150,10 +153,10 @@ export default function ContentSection() {
                   <div className="relative shrink-0">
                     <button
                       onClick={() => setOpenMenuId(openMenuId === item.id ? null : item.id)}
-                      className="rounded-full px-2 py-1 text-ink-500 hover:bg-ink-100"
+                      className="rounded-full p-1.5 text-ink-500 hover:bg-ink-100"
                       aria-label="Actions"
                     >
-                      ⋮
+                      <MoreVerticalIcon className="h-4 w-4" />
                     </button>
                     {openMenuId === item.id && (
                       <div className="absolute right-0 z-10 mt-1 w-40 overflow-hidden rounded-xl border border-ink-900/8 bg-white text-left shadow-card">
@@ -226,10 +229,10 @@ export default function ContentSection() {
                     <td className="relative px-5 py-3 text-right">
                       <button
                         onClick={() => setOpenMenuId(openMenuId === item.id ? null : item.id)}
-                        className="rounded-full px-2 py-1 text-ink-500 hover:bg-ink-100"
+                        className="rounded-full p-1.5 text-ink-500 hover:bg-ink-100"
                         aria-label="Actions"
                       >
-                        ⋮
+                        <MoreVerticalIcon className="h-4 w-4" />
                       </button>
                       {openMenuId === item.id && (
                         <div className="absolute right-5 z-10 mt-1 w-40 overflow-hidden rounded-xl border border-ink-900/8 bg-white text-left shadow-card">

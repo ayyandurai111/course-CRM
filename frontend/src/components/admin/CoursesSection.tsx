@@ -4,6 +4,7 @@ import type { Course } from "../../types";
 import { ErrorState, EmptyState } from "../common/States";
 import { TableSkeleton } from "../common/Skeleton";
 import CourseFormModal from "./CourseFormModal";
+import { PlusIcon } from "../common/Icons";
 
 type AdminCourse = Course & { _count: { content: number } };
 
@@ -42,9 +43,10 @@ export default function CoursesSection() {
         <h1 className="font-display text-xl font-semibold text-ink-950">Courses</h1>
         <button
           onClick={() => setEditing("new")}
-          className="rounded-full bg-ink-950 px-4 py-2 text-sm font-semibold text-paper-50 hover:bg-ink-900"
+          className="inline-flex items-center gap-1.5 rounded-full bg-ink-950 px-4 py-2 text-sm font-semibold text-paper-50 hover:bg-ink-900"
         >
-          + Add course
+          <PlusIcon className="h-4 w-4" />
+          Add course
         </button>
       </div>
 
@@ -55,8 +57,9 @@ export default function CoursesSection() {
           title="No courses yet"
           description="Create your first course to start publishing content."
           action={
-            <button onClick={() => setEditing("new")} className="rounded-full bg-ink-950 px-4 py-2 text-sm font-semibold text-paper-50">
-              + Add course
+            <button onClick={() => setEditing("new")} className="inline-flex items-center gap-1.5 rounded-full bg-ink-950 px-4 py-2 text-sm font-semibold text-paper-50">
+              <PlusIcon className="h-4 w-4" />
+              Add course
             </button>
           }
         />

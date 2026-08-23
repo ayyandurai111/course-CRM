@@ -3,11 +3,12 @@ const { retryQueuedStorageCleanup } = require("../services/storageCleanupQueueSe
 
 /**
  * Runs every 10 minutes and retries any Storage object deletion queued
- * by delete_course_cascade() (spec #9) that didn't complete immediately
- * — e.g. a Storage outage during course deletion, or a process restart
- * between the DB transaction committing and the follow-up delete calls
- * running. Idempotent and safe to overlap with itself or with a
- * concurrent course deletion.
+ * in storage_cleanup_queue (spec #9) that didn't complete immediately —
+ * by delete_course_cascade() (course delete) or delete_content_cascade()
+ * (single content delete) — e.g. a Storage outage during deletion, or a
+ * process restart between the DB transaction committing and the
+ * follow-up delete calls running. Idempotent and safe to overlap with
+ * itself or with a concurrent deletion.
  */
 function startStorageCleanupRetryJob() {
   cron.schedule("*/10 * * * *", async () => {

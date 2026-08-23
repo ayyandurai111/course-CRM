@@ -8,6 +8,7 @@ const contentService = require("../services/contentService");
 const { logAction } = require("../services/auditService");
 const { isSafeId, isValidContentFileKey } = require("../lib/fileValidation");
 const { containsPattern } = require("../lib/searchFilter");
+const { futureIsoDateTimeString } = require("../lib/dateValidation");
 
 const router = express.Router();
 
@@ -129,6 +130,53 @@ router.get("/upcoming", authenticate, async (req, res, next) => {
 // value forward.
 const PROGRESS_POSITION_TOLERANCE_SECONDS = 5;
 
+/**
+ * Pure — computes the server-authoritative progress for a single
+ * /progress call, given the content's type/duration and the caller's
+ * validated input. This is the fix for video-progress forgery: for
+ * VIDEO content, a client-supplied `progressPercent` is NEVER trusted —
+ * the return value is always derived from `lastPositionSeconds` and the
+ * content's own stored duration, clamped to [0, 100]. A client sending
+ * `{ progressPercent: 100 }` with no (or a bogus) position for a video
+ * simply cannot move progress forward. PDF/POST content keeps the prior
+ * model (a client-declared percent within its own 0-100 range — there
+ * is no "position" concept for those types).
+ *
+ * Returns `{ ok: true, progressPercent, lastPositionSeconds }` or
+ * `{ ok: false, error }` (never throws), so the route can turn a
+ * rejection into a clean 400 without a try/catch.
+ */
+function computeServerProgress({ type, duration, progressPercent, lastPositionSeconds }) {
+  if (type === "VIDEO") {
+    if (lastPositionSeconds === undefined) {
+      return { ok: false, error: "lastPositionSeconds is required to record progress for video content." };
+    }
+    if (!Number.isFinite(lastPositionSeconds) || lastPositionSeconds < 0) {
+      return { ok: false, error: "lastPositionSeconds must not be negative." };
+    }
+
+    if (typeof duration === "number" && duration > 0) {
+      if (lastPositionSeconds > duration + PROGRESS_POSITION_TOLERANCE_SECONDS) {
+        return { ok: false, error: "lastPositionSeconds exceeds the content's duration." };
+      }
+      const clampedPosition = Math.min(lastPositionSeconds, duration);
+      const derivedPercent = Math.max(0, Math.min(100, Math.round((clampedPosition / duration) * 100)));
+      return { ok: true, progressPercent: derivedPercent, lastPositionSeconds: clampedPosition };
+    }
+
+    // Duration isn't known yet (e.g. never set at upload time). There is
+    // no trustworthy basis to compute a percent, so completion is never
+    // derived from thin air — but the position itself is still saved so
+    // resume-from-last-position keeps working once duration is known.
+    return { ok: true, progressPercent: undefined, lastPositionSeconds };
+  }
+
+  // PDF/POST: no server-verifiable "position" exists for these types —
+  // a client-declared percent (already bounded to 0-100 by the zod
+  // schema) is the appropriate model, same as before this fix.
+  return { ok: true, progressPercent, lastPositionSeconds };
+}
+
 router.post("/:id/progress", authenticate, async (req, res, next) => {
   try {
     const schema = z.object({
@@ -154,25 +202,14 @@ router.post("/:id/progress", authenticate, async (req, res, next) => {
       return res.status(403).json({ error: "You do not have access to this content." });
     }
 
-    let { progressPercent, lastPositionSeconds } = parsed.data;
-    const duration = content.durationSeconds;
-
-    if (typeof duration === "number" && duration > 0) {
-      if (lastPositionSeconds !== undefined) {
-        if (lastPositionSeconds > duration + PROGRESS_POSITION_TOLERANCE_SECONDS) {
-          return res.status(400).json({ error: "lastPositionSeconds exceeds the content's duration." });
-        }
-        lastPositionSeconds = Math.min(lastPositionSeconds, duration);
-        // Duration is known and trustworthy, so percent is *derived*
-        // from position rather than taken from the client — this is
-        // what actually stops `{progressPercent: 100, lastPositionSeconds: 0}`-
-        // style forgery from being recorded as real progress.
-        progressPercent = Math.round((lastPositionSeconds / duration) * 100);
-      } else if (progressPercent !== undefined) {
-        // No position this call (e.g. a PDF/POST "mark viewed" ping) —
-        // trust the submitted percent within its own declared 0-100 range.
-      }
-    }
+    const computed = computeServerProgress({
+      type: content.type,
+      duration: content.durationSeconds,
+      progressPercent: parsed.data.progressPercent,
+      lastPositionSeconds: parsed.data.lastPositionSeconds,
+    });
+    if (!computed.ok) return res.status(400).json({ error: computed.error });
+    let { progressPercent, lastPositionSeconds } = computed;
 
     const progressId = `${req.user.id}_${content.id}`;
     const { data: existingProgress } = await supabase
@@ -425,24 +462,57 @@ router.patch("/:id", authenticate, requireAdmin, async (req, res, next) => {
   }
 });
 
+// Reliable content deletion (spec fix — Storage/database consistency):
+// the DB row deletion + Storage-cleanup queueing happen atomically in
+// delete_content_cascade() (see supabase/schema.sql), the same durable
+// pattern used for course deletion. This route then makes a
+// best-effort immediate Storage delete for the file that was just
+// queued; anything that fails stays PENDING/FAILED in
+// storage_cleanup_queue and is retried by the existing
+// storageCleanupRetryJob.js. A Storage failure can therefore never
+// leave a dangling `fileKey` in the database — the DB row is already
+// gone by the time we even attempt the Storage delete.
 router.delete("/:id", authenticate, requireAdmin, async (req, res, next) => {
   try {
-    const { data, error } = await supabase.from("content").select("file_key").eq("id", req.params.id).maybeSingle();
-    assertNoError(error, "Failed to load content");
-    if (!data) return res.status(404).json({ error: "Content not found." });
-    const fileKey = data.file_key;
-
-    // Storage cleanup (spec #14): delete the Storage object before the
-    // DB row, so a failure here doesn't orphan a file with no metadata
-    // pointing anyone at it for cleanup.
-    const { ok } = await deleteFileSafely(fileKey);
-    if (!ok) {
-      return res.status(500).json({ error: "Could not delete the stored file. Content was not deleted; please retry." });
+    const { data: queued, error: rpcError } = await supabase.rpc("delete_content_cascade", {
+      p_content_id: req.params.id,
+    });
+    if (rpcError && rpcError.code === "P0002") {
+      return res.status(404).json({ error: "Content not found." });
     }
+    assertNoError(rpcError, "Failed to delete content");
 
-    const { error: deleteError } = await supabase.from("content").delete().eq("id", req.params.id);
-    assertNoError(deleteError, "Failed to delete content");
-    await logAction({ actorId: req.user.id, action: "content.delete", entityType: "Content", entityId: req.params.id, metadata: { fileKey } });
+    const files = rows(queued);
+    let cleanedUp = 0;
+    let stillPending = 0;
+    await Promise.all(
+      files.map(async (f) => {
+        const result = await deleteFileSafely(f.fileKey);
+        if (result.ok) {
+          cleanedUp += 1;
+          await supabase.from("storage_cleanup_queue").update({ status: "DONE", updated_at: new Date() }).eq("id", f.queueId);
+        } else {
+          stillPending += 1;
+          await supabase
+            .from("storage_cleanup_queue")
+            .update({
+              status: "FAILED",
+              attempts: 1,
+              last_error: String(result.error?.message || result.error || "unknown error"),
+              updated_at: new Date(),
+            })
+            .eq("id", f.queueId);
+        }
+      })
+    );
+
+    await logAction({
+      actorId: req.user.id,
+      action: "content.delete",
+      entityType: "Content",
+      entityId: req.params.id,
+      metadata: { fileKey: files[0]?.fileKey || null, filesCleanedUpImmediately: cleanedUp, filesPendingRetry: stillPending },
+    });
     res.status(204).send();
   } catch (err) {
     next(err);
@@ -467,10 +537,51 @@ function handleTransition(actionName, fn) {
   };
 }
 
+/**
+ * Same as handleTransition, but validates req.body against `schema`
+ * first (spec fix — "Validate Scheduled Dates"). Used for /schedule and
+ * /reschedule so an invalid or missing `scheduledAt` is rejected with a
+ * clean 400 before ever reaching contentService — which still re-checks
+ * defensively itself (see lib/dateValidation.js).
+ */
+function handleValidatedTransition(actionName, schema, fn) {
+  return async (req, res, next) => {
+    try {
+      const parsed = schema.safeParse(req.body);
+      if (!parsed.success) return res.status(400).json({ error: parsed.error.errors[0].message });
+      const content = await fn(req.params.id, parsed.data);
+      await logAction({
+        actorId: req.user.id,
+        action: `content.${actionName}`,
+        entityType: "Content",
+        entityId: content.id,
+        metadata: parsed.data,
+      });
+      res.json({ content });
+    } catch (err) {
+      next(err);
+    }
+  };
+}
+
+const scheduleBodySchema = z.object({ scheduledAt: futureIsoDateTimeString });
+
 router.post("/:id/publish", authenticate, requireAdmin, handleTransition("publish", (id) => contentService.publishNow(id)));
-router.post("/:id/schedule", authenticate, requireAdmin, handleTransition("schedule", (id, body) => contentService.schedule(id, body.scheduledAt)));
-router.post("/:id/reschedule", authenticate, requireAdmin, handleTransition("reschedule", (id, body) => contentService.reschedule(id, body.scheduledAt)));
+router.post(
+  "/:id/schedule",
+  authenticate,
+  requireAdmin,
+  handleValidatedTransition("schedule", scheduleBodySchema, (id, body) => contentService.schedule(id, body.scheduledAt))
+);
+router.post(
+  "/:id/reschedule",
+  authenticate,
+  requireAdmin,
+  handleValidatedTransition("reschedule", scheduleBodySchema, (id, body) => contentService.reschedule(id, body.scheduledAt))
+);
 router.post("/:id/unpublish", authenticate, requireAdmin, handleTransition("unpublish", (id) => contentService.unpublish(id)));
 router.post("/:id/archive", authenticate, requireAdmin, handleTransition("archive", (id) => contentService.archive(id)));
 
 module.exports = router;
+module.exports.computeServerProgress = computeServerProgress;
+module.exports.scheduleBodySchema = scheduleBodySchema;

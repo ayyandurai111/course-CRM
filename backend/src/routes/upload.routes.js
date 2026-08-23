@@ -5,6 +5,7 @@ const fs = require("fs");
 const path = require("path");
 const crypto = require("crypto");
 const rateLimit = require("express-rate-limit");
+const { createRateLimitStore } = require("../lib/rateLimitStore");
 const { supabase, assertNoError } = require("../lib/db");
 const { uploadFile } = require("../lib/storage");
 const { authenticate, requireAdmin } = require("../middleware/auth");
@@ -20,7 +21,8 @@ const {
   isSafeId,
 } = require("../lib/fileValidation");
 const { logAction } = require("../services/auditService");
-const { tryAcquireUploadSlot, releaseUploadSlot } = require("../lib/uploadGate");
+const { tryAcquireUploadSlot, releaseUploadSlot, releaseBytes } = require("../lib/uploadGate");
+const { createMeteredDiskStorage } = require("../lib/meteredUploadStorage");
 
 // Per-user daily upload quota (spec #15A). Enforced atomically in
 // Postgres via try_reserve_upload_quota() (see supabase/schema.sql) —
@@ -33,12 +35,15 @@ const router = express.Router();
 
 // Dedicated, tighter rate limit for uploads on top of the app-wide one in
 // index.js — protects against upload-flooding even from an authenticated
-// admin account (compromised credentials, buggy client, etc).
+// admin account (compromised credentials, buggy client, etc). Store
+// selection (spec #10): see lib/rateLimitStore.js — per-process unless
+// REDIS_URL + the optional Redis packages are configured.
 const uploadLimiter = rateLimit({
   windowMs: 15 * 60 * 1000,
   max: Number(process.env.UPLOAD_RATE_LIMIT_PER_15MIN) || 60,
   standardHeaders: true,
   legacyHeaders: false,
+  store: createRateLimitStore("upload"),
 });
 
 // Explicit upload timeout (spec #3D) — large uploads must not be left
@@ -46,27 +51,30 @@ const uploadLimiter = rateLimit({
 // for small JSON requests elsewhere in this app.
 const UPLOAD_TIMEOUT_MS = Number(process.env.UPLOAD_TIMEOUT_MS) || 15 * 60 * 1000; // 15 min
 
-// Concurrency + temp-disk gate (spec #3C/#3G): rejects a new upload
-// before multer even starts writing to disk if the instance is already
-// at its concurrent-upload or temp-storage ceiling. Uses the request's
-// declared Content-Length as the size estimate — an honest client's
-// upper bound, and even an inflated one only makes this gate stricter.
+// Concurrency gate (spec #3C): rejects a new upload before multer even
+// starts writing to disk if the instance is already at its
+// concurrent-upload ceiling. Temp-disk *byte* accounting is handled
+// separately and live (see meteredDiskStorage below) — it is
+// deliberately NOT derived from Content-Length, which a client can omit
+// entirely (`Transfer-Encoding: chunked`) to make the old reservation
+// logic see 0 bytes while a large file is still written to disk.
 function uploadGate(req, res, next) {
   req.setTimeout(UPLOAD_TIMEOUT_MS);
   res.setTimeout(UPLOAD_TIMEOUT_MS);
 
-  const declaredBytes = Number(req.headers["content-length"]);
-  const slot = tryAcquireUploadSlot(declaredBytes);
+  const slot = tryAcquireUploadSlot();
   if (!slot.ok) {
     return res.status(503).json({ error: slot.reason });
   }
-  req._uploadSlotBytes = slot.bytes;
   req._uploadSlotReleased = false;
 
   const release = () => {
     if (req._uploadSlotReleased) return;
     req._uploadSlotReleased = true;
-    releaseUploadSlot(req._uploadSlotBytes);
+    releaseUploadSlot();
+    // Release whatever bytes were live-metered for this upload,
+    // however far it got (0 if it never started streaming).
+    releaseBytes(req._uploadReservedBytes || 0);
     // Belt-and-suspenders temp-file cleanup: covers a client
     // disconnecting mid-upload, before the route handler's own
     // try/finally ever runs (spec #3I "client disconnect during
@@ -88,23 +96,36 @@ function uploadGate(req, res, next) {
 // in process memory — a 500MB video would otherwise be held entirely in
 // RAM under multer.memoryStorage(), which can crash the server under
 // concurrent uploads. The temp file is streamed on to Supabase Storage
-// and always removed afterwards (success or failure).
+// and always removed afterwards (success or failure). Byte accounting
+// against the shared temp-disk pool happens live in this storage engine
+// (see lib/meteredUploadStorage.js) rather than from Content-Length, so
+// a chunked request with no Content-Length is bounded the same as any
+// other (spec fix: chunked-upload resource-exhaustion bypass).
+// Multipart parsing limits (spec fix — "Harden Multer Multipart
+// Parsing"). Previously only `fileSize` and `files` were set, leaving
+// busboy/multer's other limits at permissive defaults (`fields` and
+// `parts` effectively unbounded, `headerPairs` at 2000, and
+// `fieldNestingDepth` — a multer-specific option layered on top of
+// busboy, see node_modules/multer/lib/make-middleware.js — unset,
+// meaning a bracket-notation field name like `a[b][c][d]...` is
+// expanded into an arbitrarily deep nested object with no limit at
+// all). None of that is reachable from a legitimate request to this
+// route, which only ever sends two flat non-file fields (`type`,
+// `courseId`) alongside one file.
+const MULTIPART_LIMITS = {
+  fileSize: maxPossibleSizeBytes(), // hard per-file ceiling, enforced by busboy independent of Content-Length; the real per-type limit is enforced below
+  files: 1,
+  fields: 20, // only `type`/`courseId` are ever used; generous headroom without being unbounded
+  fieldNameSize: 100, // busboy default
+  fieldSize: 2 * 1024, // field values here are short (UUID/enum) — no legitimate reason to allow more
+  parts: 25, // fields + files combined
+  headerPairs: 50, // busboy default is 2000; a handful of headers per part is all this route ever needs
+  fieldNestingDepth: 2, // rejects deeply-nested bracket-notation field names (e.g. a[b][c][d]...) outright
+};
+
 const upload = multer({
-  storage: multer.diskStorage({
-    destination: (req, file, cb) => cb(null, os.tmpdir()),
-    filename: (req, file, cb) => {
-      const name = `upload-${Date.now()}-${Math.random().toString(36).slice(2)}`;
-      // Recorded on `req` (not just the multer file object) so the
-      // uploadGate cleanup handler above can unlink it even if the
-      // request aborts before multer's own callback chain finishes.
-      req._uploadTempPath = path.join(os.tmpdir(), name);
-      cb(null, name);
-    },
-  }),
-  limits: {
-    fileSize: maxPossibleSizeBytes(), // hard ceiling; the real per-type limit is enforced below
-    files: 1,
-  },
+  storage: createMeteredDiskStorage(),
+  limits: MULTIPART_LIMITS,
   fileFilter: (req, file, cb) => {
     const type = req.query.type || req.body.type;
     const rule = UPLOAD_RULES[type];
@@ -141,14 +162,44 @@ async function removeTempFile(filePath) {
  * column default). This keeps every uploaded file's storage path
  * anchored to a real content row instead of a throwaway random folder.
  */
+const ALLOWED_UPLOAD_FIELDS = new Set(["type", "courseId"]);
+
+/**
+ * Pure — validates the non-file field names multer parsed into
+ * req.body. Extracted so the "reject excessively nested/unexpected
+ * multipart fields" behavior (see doc comment at the call site below)
+ * is directly unit-testable without spinning up the full authenticated
+ * route + Supabase-backed handler.
+ */
+function findUnexpectedUploadField(body) {
+  for (const key of Object.keys(body || {})) {
+    if (!ALLOWED_UPLOAD_FIELDS.has(key)) return key;
+  }
+  return null;
+}
+
 router.post("/", authenticate, requireAdmin, uploadLimiter, uploadGate, upload.single("file"), async (req, res, next) => {
   let tempPath = req.file && req.file.path;
   try {
     if (!req.file) return res.status(400).json({ error: "No file uploaded." });
 
+    // Defense-in-depth on top of `limits.fieldNestingDepth` above: this
+    // route has exactly two legitimate non-file fields, so strictly
+    // allowlist the top-level field names it will accept at all — a
+    // field name that produced any other top-level key (nested or not)
+    // is rejected outright, regardless of whether it happened to fit
+    // under the nesting-depth limit.
+    const unexpectedField = findUnexpectedUploadField(req.body);
+    if (unexpectedField) {
+      return res.status(400).json({ error: `Unexpected form field "${unexpectedField}".` });
+    }
+
     const type = req.query.type || req.body.type;
     const courseId = req.body.courseId || req.query.courseId;
-    if (!courseId || !isSafeId(courseId)) {
+    if (typeof type !== "string" || !UPLOAD_RULES[type]) {
+      return res.status(400).json({ error: "A valid content `type` (VIDEO, PDF, or POST) is required." });
+    }
+    if (!courseId || typeof courseId !== "string" || !isSafeId(courseId)) {
       return res.status(400).json({ error: "A valid `courseId` is required." });
     }
 
@@ -246,3 +297,5 @@ router.use((err, req, res, next) => {
 });
 
 module.exports = router;
+module.exports.MULTIPART_LIMITS = MULTIPART_LIMITS;
+module.exports.findUnexpectedUploadField = findUnexpectedUploadField;

@@ -1,4 +1,5 @@
 import { useEffect } from "react";
+import { XIcon } from "../common/Icons";
 
 export default function LegalDrawer({
   title,
@@ -31,7 +32,7 @@ export default function LegalDrawer({
             className="rounded-full p-2 text-ink-500 hover:bg-ink-100"
             aria-label={`Close ${title}`}
           >
-            ✕
+            <XIcon className="h-4 w-4" />
           </button>
         </div>
         <div className="prose prose-sm max-w-none text-ink-700">{children}</div>

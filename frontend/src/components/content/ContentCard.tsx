@@ -1,5 +1,5 @@
 import type { ContentItem } from "../../types";
-import ContentTypeBadge from "../common/ContentTypeBadge";
+import ContentTypeBadge, { CONTENT_TYPE_CONFIG } from "../common/ContentTypeBadge";
 
 function formatDate(iso?: string | null) {
   if (!iso) return "";
@@ -23,8 +23,11 @@ export default function ContentCard({ item, onOpen }: { item: ContentItem; onOpe
         {item.imageUrl ? (
           <img src={item.imageUrl} alt="" className="h-full w-full object-cover" />
         ) : (
-          <div className="flex h-full items-center justify-center text-3xl text-ink-300" aria-hidden="true">
-            {item.type === "VIDEO" ? "▶" : item.type === "PDF" ? "▤" : "◆"}
+          <div className="flex h-full items-center justify-center text-ink-300">
+            {(() => {
+              const Icon = CONTENT_TYPE_CONFIG[item.type].icon;
+              return <Icon className="h-10 w-10" />;
+            })()}
           </div>
         )}
         <ContentTypeBadge type={item.type} className="absolute left-3 top-3" />
