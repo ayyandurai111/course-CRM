@@ -9,17 +9,29 @@ anywhere — every screen reads from a real Supabase project you control.
 > Supabase (Auth + Postgres + Storage). The architecture and every
 > business rule are unchanged; only the underlying platform is different.
 
-## Test student account
+## Test accounts
 
-For manual testing without assigning a plan from the Admin panel, this project includes an optional test-student seeder. It creates a non-admin Supabase Auth account, creates/updates a `[TEST] All Access` plan containing every current course, and assigns that plan with lifetime access.
+For manual testing without assigning a plan from the Admin panel, this project includes optional test-account seeders. Each creates a Supabase Auth account, creates/updates a `[TEST] All Access` plan containing every current course, and assigns that plan with lifetime access. Google login is completely separate from this and is not affected by any of it.
 
+There are **two independent test accounts** you can enable, each with its own credentials, so they don't collide:
+
+**Test account** (existing — used here as the admin-side login):
 1. Set `TEST_ACCOUNT_EMAIL`, `TEST_ACCOUNT_PASSWORD`, and optionally `TEST_ACCOUNT_NAME` in `backend/.env`.
 2. Run `npm run seed:test --workspace backend`.
-3. Put the same test email/password in `frontend/.env` as `VITE_TEST_ACCOUNT_EMAIL` / `VITE_TEST_ACCOUNT_PASSWORD`.
+3. Put the same email/password in `frontend/.env` as `VITE_TEST_ACCOUNT_EMAIL` / `VITE_TEST_ACCOUNT_PASSWORD`.
 4. Set `VITE_ENABLE_TEST_ACCOUNT=true` and rebuild the frontend.
 5. The Login page will show **Continue with Test Account**.
 
-The credentials are public to the browser when this button is enabled, so use this only for non-sensitive test/demo content. Re-run the seed command after adding courses so the test plan includes them.
+**Test student account** (new — a second, separate account, always STUDENT role):
+1. Set `TEST_STUDENT_ACCOUNT_EMAIL`, `TEST_STUDENT_ACCOUNT_PASSWORD`, and optionally `TEST_STUDENT_ACCOUNT_NAME` in `backend/.env`.
+2. Run `npm run seed:test:student --workspace backend`.
+3. Put the same email/password in `frontend/.env` as `VITE_TEST_STUDENT_ACCOUNT_EMAIL` / `VITE_TEST_STUDENT_ACCOUNT_PASSWORD`.
+4. Set `VITE_ENABLE_TEST_STUDENT_ACCOUNT=true` and rebuild the frontend.
+5. The Login page will additionally show **Continue with Test Student Account**.
+
+Both seed scripts hardcode `role: "STUDENT"` on every run, so even if `SEED_ADMIN_EMAIL` were ever misconfigured to match one of these emails, re-running the seed script forces it back to STUDENT.
+
+Credentials are public to the browser when a test button is enabled, so use these only for non-sensitive test/demo content. Re-run the relevant seed command after adding courses so its test plan includes them.
 
 
 ## Architecture

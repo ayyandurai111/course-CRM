@@ -16,6 +16,7 @@ export default function LoginPage() {
   const [error, setError] = useState<string | null>(null);
   const [submitting, setSubmitting] = useState(false);
   const [testSubmitting, setTestSubmitting] = useState(false);
+  const [testStudentSubmitting, setTestStudentSubmitting] = useState(false);
 
   // Supabase's Google sign-in is a full-page redirect (there's no
   // popup), so we can't get the signed-in user back synchronously from
@@ -55,6 +56,24 @@ export default function LoginPage() {
     }
   }
 
+  async function handleTestStudentAccount() {
+    const email = import.meta.env.VITE_TEST_STUDENT_ACCOUNT_EMAIL;
+    const password = import.meta.env.VITE_TEST_STUDENT_ACCOUNT_PASSWORD;
+    if (!email || !password) {
+      setError("Test student account is not configured.");
+      return;
+    }
+
+    setError(null);
+    setTestStudentSubmitting(true);
+    try {
+      await loginWithPassword(email, password);
+    } catch (err) {
+      setError(friendlyAuthError(err));
+      setTestStudentSubmitting(false);
+    }
+  }
+
   return (
     <div className="flex min-h-screen items-center justify-center bg-paper-50 px-5">
       <div className="w-full max-w-sm text-center">
@@ -65,7 +84,10 @@ export default function LoginPage() {
         <div className="rounded-xl2 border border-ink-900/8 bg-white p-8 shadow-card">
           <h1 className="font-display text-xl font-semibold text-ink-950">Welcome</h1>
           <p className="mt-1.5 text-sm text-ink-500">
-            Sign in with Google to continue{import.meta.env.VITE_ENABLE_TEST_ACCOUNT === "true" ? " or use the test account below." : "."}
+            Sign in with Google to continue
+            {import.meta.env.VITE_ENABLE_TEST_ACCOUNT === "true" || import.meta.env.VITE_ENABLE_TEST_STUDENT_ACCOUNT === "true"
+              ? " or use a test account below."
+              : "."}
           </p>
 
           <button
@@ -90,6 +112,17 @@ export default function LoginPage() {
               className="mt-3 w-full rounded-full border border-amber-400/50 bg-amber-50 py-3 text-sm font-semibold text-amber-800 transition hover:bg-amber-100 disabled:opacity-60"
             >
               {testSubmitting ? "Signing in to test account…" : "Continue with Test Account"}
+            </button>
+          )}
+
+          {import.meta.env.VITE_ENABLE_TEST_STUDENT_ACCOUNT === "true" && (
+            <button
+              type="button"
+              onClick={handleTestStudentAccount}
+              disabled={submitting || testStudentSubmitting}
+              className="mt-3 w-full rounded-full border border-sky-400/50 bg-sky-50 py-3 text-sm font-semibold text-sky-800 transition hover:bg-sky-100 disabled:opacity-60"
+            >
+              {testStudentSubmitting ? "Signing in to test student account…" : "Continue with Test Student Account"}
             </button>
           )}
 

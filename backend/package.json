@@ -8,7 +8,8 @@
     "start": "node src/index.js",
     "seed:admin": "node scripts/promoteAdmin.js",
     "test": "node --test src/__tests__/*.test.js",
-    "seed:test": "node scripts/seedTestAccount.js"
+    "seed:test": "node scripts/seedTestAccount.js",
+    "seed:test:student": "node scripts/seedTestStudentAccount.js"
   },
   "dependencies": {
     "@supabase/supabase-js": "^2.45.4",
