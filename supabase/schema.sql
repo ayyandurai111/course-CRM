@@ -923,6 +923,9 @@ alter table public.upload_quota_usage enable row level security;
 -- equivalent to the old Firebase Storage bucket + storage.rules.
 -- Create the bucket via the dashboard (Storage > New bucket > name
 -- "course-files", "Public bucket" OFF) or uncomment the insert below.
+--
+-- A second, PUBLIC bucket ("course-thumbnails") also exists for course
+-- thumbnail images — see supabase/migrations/20260823_add_course_thumbnails_bucket.sql.
 -- ---------------------------------------------------------------------
 -- insert into storage.buckets (id, name, public)
 --   values ('course-files', 'course-files', false)

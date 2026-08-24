@@ -2,6 +2,15 @@ const fs = require("fs");
 const { Readable } = require("stream");
 const { supabase, STORAGE_BUCKET } = require("./supabase");
 
+// Separate PUBLIC bucket, only for course thumbnails. The main
+// STORAGE_BUCKET above is private and only ever read via short-lived
+// signed URLs (see getSignedUrl below) because it holds paid course
+// content. Thumbnails are the opposite: they need to be visible on the
+// public landing page indefinitely, without auth and without an
+// expiring URL, so they get their own bucket that's actually public in
+// Supabase Storage (see supabase/migrations for the bucket creation).
+const THUMBNAIL_BUCKET = process.env.SUPABASE_THUMBNAIL_BUCKET || "course-thumbnails";
+
 // Spec #14: explicit timeout for Storage operations, so a hung Storage
 // API call can't hold a request (and its underlying temp file/DB
 // connection) open indefinitely. This can't literally abort the
@@ -110,6 +119,45 @@ async function getSignedUrl(storagePath, expiresInSeconds) {
 }
 
 /**
+ * Uploads a small image already held in memory (course thumbnails only
+ * — a few hundred KB to a few MB, never large enough to need the
+ * temp-file streaming path uploadFile() above uses for videos) to the
+ * PUBLIC thumbnail bucket, then returns its permanent public URL. Uses
+ * `upsert: true` because a thumbnail replacement re-uses the same
+ * storagePath (the course's id-derived path) rather than growing a new
+ * object per edit.
+ */
+async function uploadPublicImage(buffer, storagePath, contentType) {
+  const { error } = await withTimeout(
+    supabase.storage.from(THUMBNAIL_BUCKET).upload(storagePath, buffer, {
+      contentType,
+      upsert: true,
+      cacheControl: "3600",
+    }),
+    `upload ${storagePath}`
+  );
+  if (error) throw error;
+  const { data } = supabase.storage.from(THUMBNAIL_BUCKET).getPublicUrl(storagePath);
+  return data.publicUrl;
+}
+
+/** Best-effort delete of a thumbnail object; never throws. */
+async function deleteThumbnailSafely(storagePath) {
+  if (!storagePath) return { ok: true };
+  try {
+    const { error } = await withTimeout(
+      supabase.storage.from(THUMBNAIL_BUCKET).remove([storagePath]),
+      `delete thumbnail ${storagePath}`
+    );
+    if (error) throw error;
+    return { ok: true };
+  } catch (err) {
+    console.error(`Failed to delete thumbnail ${storagePath}:`, err);
+    return { ok: false, error: err };
+  }
+}
+
+/**
  * Recursively walks every object under `prefix` (default: the whole
  * bucket). Storage's list() only returns one directory level at a time
  * and represents sub-folders as entries with `id: null`, so this walks
@@ -141,4 +189,4 @@ async function listAllObjects(prefix = "") {
   return results;
 }
 
-module.exports = { uploadFile, deleteFileSafely, fileExists, getSignedUrl, listAllObjects };
+module.exports = { uploadFile, deleteFileSafely, fileExists, getSignedUrl, listAllObjects, uploadPublicImage, deleteThumbnailSafely, THUMBNAIL_BUCKET };

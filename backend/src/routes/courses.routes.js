@@ -1,10 +1,19 @@
 const express = require("express");
+const multer = require("multer");
+const crypto = require("crypto");
 const { isAllowedHttpsImageUrl } = require("../lib/urlSecurity");
 const { z } = require("zod");
 const { supabase, row, rows, toSnake, assertNoError } = require("../lib/db");
-const { deleteFileSafely } = require("../lib/storage");
+const { deleteFileSafely, uploadPublicImage } = require("../lib/storage");
 const { authenticate, requireAdmin } = require("../middleware/auth");
 const { logAction } = require("../services/auditService");
+const {
+  maxSizeBytesFor,
+  safeExtension,
+  isExtensionAllowed,
+  isMimeAllowed,
+  matchesFileSignature,
+} = require("../lib/fileValidation");
 
 const router = express.Router();
 
@@ -133,6 +142,62 @@ const courseSchema = z.object({
   thumbnailUrl: httpsUrl.optional().or(z.literal("")),
   startAt: z.string().datetime({ offset: true }).nullable().optional(),
   isPublished: z.boolean().optional(),
+});
+
+// Admin-only. Uploads a thumbnail image and returns its permanent
+// public URL for use as `thumbnailUrl` on POST/PATCH below. A separate
+// endpoint (rather than bundling the file into the course create/update
+// request) because course creation is still plain JSON and this needs
+// multipart/form-data — same reasoning as the video/pdf/post upload
+// flow in upload.routes.js, just scoped to thumbnails and its own
+// public Storage bucket (see lib/storage.js THUMBNAIL_BUCKET).
+//
+// Not tied to a courseId: an admin can upload a thumbnail while
+// creating a brand-new course, before any course row exists yet — the
+// generated storage path is just `thumbnails/{randomId}{ext}`.
+const thumbnailUpload = multer({
+  storage: multer.memoryStorage(),
+  limits: { fileSize: maxSizeBytesFor("POST"), files: 1 },
+});
+
+router.post("/thumbnail", authenticate, requireAdmin, thumbnailUpload.single("file"), async (req, res, next) => {
+  try {
+    if (!req.file) return res.status(400).json({ error: "No file uploaded." });
+
+    const ext = safeExtension(req.file.originalname);
+    if (!isExtensionAllowed("POST", ext)) {
+      return res.status(400).json({ error: `File extension ${ext || "(none)"} is not allowed. Use JPG, PNG, or WEBP.` });
+    }
+    if (!isMimeAllowed("POST", req.file.mimetype)) {
+      return res.status(400).json({ error: `File type ${req.file.mimetype} is not allowed. Use JPG, PNG, or WEBP.` });
+    }
+    if (!matchesFileSignature("POST", req.file.buffer.subarray(0, 16))) {
+      return res.status(415).json({ error: "File content does not match its declared type." });
+    }
+
+    const storagePath = `thumbnails/${crypto.randomUUID()}${ext}`;
+    const thumbnailUrl = await uploadPublicImage(req.file.buffer, storagePath, req.file.mimetype);
+
+    await logAction({
+      actorId: req.user.id,
+      action: "course.thumbnail_upload",
+      entityType: "Course",
+      metadata: { storagePath, fileSizeBytes: req.file.size },
+    });
+
+    res.status(201).json({ thumbnailUrl });
+  } catch (err) {
+    next(err);
+  }
+});
+
+router.use((err, req, res, next) => {
+  if (err instanceof multer.MulterError) {
+    const status = err.code === "LIMIT_FILE_SIZE" ? 413 : 400;
+    const maxMb = Math.round(maxSizeBytesFor("POST") / (1024 * 1024));
+    return res.status(status).json({ error: err.code === "LIMIT_FILE_SIZE" ? `Thumbnail exceeds the ${maxMb}MB limit.` : err.message });
+  }
+  next(err);
 });
 
 router.post("/", authenticate, requireAdmin, async (req, res, next) => {

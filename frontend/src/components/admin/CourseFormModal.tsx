@@ -1,4 +1,4 @@
-import { useEffect, useState, FormEvent } from "react";
+import { useEffect, useState, FormEvent, useRef } from "react";
 import Modal from "../modals/Modal";
 import { Field, inputClass, PrimaryButton } from "../forms/FormFields";
 import { apiRequest, ApiError } from "../../lib/apiClient";
@@ -12,6 +12,9 @@ function toDateTimeLocal(iso: string | null | undefined): string {
   return `${date.getFullYear()}-${pad(date.getMonth() + 1)}-${pad(date.getDate())}T${pad(date.getHours())}:${pad(date.getMinutes())}`;
 }
 
+const ACCEPTED_THUMBNAIL_TYPES = ["image/jpeg", "image/png", "image/webp"];
+const MAX_THUMBNAIL_MB = 10;
+
 export default function CourseFormModal({
   course,
   onClose,
@@ -24,15 +27,56 @@ export default function CourseFormModal({
   const [title, setTitle] = useState(course?.title ?? "");
   const [description, setDescription] = useState(course?.description ?? "");
   const [category, setCategory] = useState(course?.category ?? "");
-  const [thumbnailUrl, setThumbnailUrl] = useState(course?.thumbnailUrl ?? "");
+  // thumbnailFile: a newly picked image waiting to be uploaded on submit.
+  // thumbnailPreviewUrl: what to actually show in the preview box — a
+  // local object URL for a freshly picked file, or the course's
+  // existing thumbnail when editing and nothing new has been picked yet.
+  const [thumbnailFile, setThumbnailFile] = useState<File | null>(null);
+  const [thumbnailPreviewUrl, setThumbnailPreviewUrl] = useState(course?.thumbnailUrl ?? "");
   const [startAt, setStartAt] = useState(() => toDateTimeLocal(course?.startAt));
   const [isPublished, setIsPublished] = useState(course?.isPublished ?? false);
   const [error, setError] = useState<string | null>(null);
   const [saving, setSaving] = useState(false);
+  const [uploadingThumbnail, setUploadingThumbnail] = useState(false);
+  const fileInputRef = useRef<HTMLInputElement>(null);
 
   useEffect(() => {
     setStartAt(toDateTimeLocal(course?.startAt));
   }, [course?.id, course?.startAt]);
+
+  // Revoke the local object URL when it's replaced or the modal unmounts,
+  // so picking several thumbnails in a row doesn't leak memory.
+  useEffect(() => {
+    return () => {
+      if (thumbnailPreviewUrl.startsWith("blob:")) URL.revokeObjectURL(thumbnailPreviewUrl);
+    };
+  }, [thumbnailPreviewUrl]);
+
+  function handleFileChange(e: React.ChangeEvent<HTMLInputElement>) {
+    setError(null);
+    const file = e.target.files?.[0];
+    if (!file) return;
+
+    if (!ACCEPTED_THUMBNAIL_TYPES.includes(file.type)) {
+      setError("Please choose a JPG, PNG, or WEBP image.");
+      e.target.value = "";
+      return;
+    }
+    if (file.size > MAX_THUMBNAIL_MB * 1024 * 1024) {
+      setError(`Image is too large — please choose one under ${MAX_THUMBNAIL_MB}MB.`);
+      e.target.value = "";
+      return;
+    }
+
+    setThumbnailFile(file);
+    setThumbnailPreviewUrl(URL.createObjectURL(file));
+  }
+
+  function clearThumbnail() {
+    setThumbnailFile(null);
+    setThumbnailPreviewUrl("");
+    if (fileInputRef.current) fileInputRef.current.value = "";
+  }
 
   async function handleSubmit(e: FormEvent) {
     e.preventDefault();
@@ -44,7 +88,28 @@ export default function CourseFormModal({
         setError("Please enter a valid course start date and time.");
         return;
       }
-      const body = { title: title.trim(), description: description.trim(), category: category.trim() || undefined, thumbnailUrl: thumbnailUrl.trim() || undefined, startAt: startDate ? startDate.toISOString() : null, isPublished };
+
+      // Only upload if the admin actually picked a new file — editing an
+      // existing course without touching the thumbnail should leave its
+      // current thumbnailUrl untouched, not re-upload anything.
+      let thumbnailUrl = course?.thumbnailUrl ?? undefined;
+      if (thumbnailFile) {
+        setUploadingThumbnail(true);
+        const formData = new FormData();
+        formData.append("file", thumbnailFile);
+        const res = await apiRequest<{ thumbnailUrl: string }>("/courses/thumbnail", {
+          method: "POST",
+          body: formData,
+          isFormData: true,
+        });
+        thumbnailUrl = res.thumbnailUrl;
+        setUploadingThumbnail(false);
+      } else if (!thumbnailPreviewUrl) {
+        // The admin explicitly cleared the thumbnail.
+        thumbnailUrl = undefined;
+      }
+
+      const body = { title: title.trim(), description: description.trim(), category: category.trim() || undefined, thumbnailUrl, startAt: startDate ? startDate.toISOString() : null, isPublished };
       if (course) {
         await apiRequest(`/courses/${course.id}`, { method: "PATCH", body });
       } else {
@@ -52,6 +117,7 @@ export default function CourseFormModal({
       }
       onSaved();
     } catch (err) {
+      setUploadingThumbnail(false);
       setError(err instanceof ApiError ? err.message : "Couldn't save this course.");
     } finally {
       setSaving(false);
@@ -77,8 +143,35 @@ export default function CourseFormModal({
         <Field label="Category" htmlFor="c-cat">
           <input id="c-cat" value={category} onChange={(e) => setCategory(e.target.value)} className={inputClass} />
         </Field>
-        <Field label="Thumbnail URL" htmlFor="c-thumb">
-          <input id="c-thumb" value={thumbnailUrl} onChange={(e) => setThumbnailUrl(e.target.value)} className={inputClass} />
+        <Field label="Thumbnail" htmlFor="c-thumb" hint="JPG, PNG, or WEBP, up to 10MB.">
+          <div className="flex items-start gap-3">
+            {thumbnailPreviewUrl && (
+              <img
+                src={thumbnailPreviewUrl}
+                alt="Thumbnail preview"
+                className="h-16 w-24 flex-shrink-0 rounded-lg border border-ink-900/15 object-cover"
+              />
+            )}
+            <div className="flex-1">
+              <input
+                id="c-thumb"
+                ref={fileInputRef}
+                type="file"
+                accept="image/jpeg,image/png,image/webp"
+                onChange={handleFileChange}
+                className={`${inputClass} cursor-pointer file:mr-3 file:cursor-pointer file:rounded-full file:border-0 file:bg-ink-950 file:px-3 file:py-1.5 file:text-xs file:font-semibold file:text-paper-50`}
+              />
+              {thumbnailPreviewUrl && (
+                <button
+                  type="button"
+                  onClick={clearThumbnail}
+                  className="mt-1.5 text-xs font-medium text-ink-500 hover:text-ink-950"
+                >
+                  Remove thumbnail
+                </button>
+              )}
+            </div>
+          </div>
         </Field>
         <Field label="Course start date & time" htmlFor="c-start" hint="Optional. Set this to show the course in students' Upcoming Courses. The time is saved with timezone information.">
           <input
@@ -100,7 +193,9 @@ export default function CourseFormModal({
           <button type="button" onClick={onClose} className="rounded-full px-5 py-2.5 text-sm font-medium text-ink-700">
             Cancel
           </button>
-          <PrimaryButton disabled={saving}>{saving ? "Saving…" : "Save course"}</PrimaryButton>
+          <PrimaryButton disabled={saving}>
+            {uploadingThumbnail ? "Uploading thumbnail…" : saving ? "Saving…" : "Save course"}
+          </PrimaryButton>
         </div>
       </form>
     </Modal>

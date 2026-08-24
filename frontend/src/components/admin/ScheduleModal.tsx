@@ -21,6 +21,16 @@ export default function ScheduleModal({
     return `${date.getFullYear()}-${pad(date.getMonth() + 1)}-${pad(date.getDate())}T${pad(date.getHours())}:${pad(date.getMinutes())}`;
   }
 
+  // The backend rejects any scheduledAt that isn't strictly in the
+  // future (see backend/src/lib/dateValidation.js). Without this, the
+  // picker happily let an admin choose yesterday, they'd fill out the
+  // whole form, and only find out it was invalid after submitting. This
+  // min stops the picker from offering past date/times at all, so the
+  // mismatch between what the UI allows and what the API accepts can't
+  // happen. Recomputed fresh each render so it stays accurate if the
+  // modal is left open across a minute boundary.
+  const minDateTime = toLocalDateTimeInput(new Date().toISOString());
+
   const [value, setValue] = useState(() => toLocalDateTimeInput(content.scheduledAt));
   const [error, setError] = useState<string | null>(null);
   const [saving, setSaving] = useState(false);
@@ -39,6 +49,10 @@ export default function ScheduleModal({
       const localDate = new Date(value);
       if (Number.isNaN(localDate.getTime())) {
         setError("Choose a valid publish date and time.");
+        return;
+      }
+      if (localDate.getTime() <= Date.now()) {
+        setError("Choose a date and time in the future.");
         return;
       }
       // datetime-local is interpreted in the browser's local timezone.
@@ -66,6 +80,7 @@ export default function ScheduleModal({
             id="sch-time"
             type="datetime-local"
             required
+            min={minDateTime}
             value={value}
             onChange={(e) => setValue(e.target.value)}
             className={inputClass}
