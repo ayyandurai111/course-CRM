@@ -124,12 +124,38 @@ router.get("/stream/:contentId", async (req, res, next) => {
       if (!allowed) return res.status(403).end();
     }
 
-    const signedUrl = await getSignedUrl(content.fileKey, 60);
+    // A hung or failed fetch to Storage here previously surfaced to the
+    // browser as nothing at all — no response, no error — which looked
+    // like a permanently black, silently-stuck video/PDF with no way to
+    // recover short of a full page reload. Bound the upstream call and
+    // retry once with a freshly minted signed URL (they're free to mint)
+    // so a single transient hiccup doesn't require that.
+    const UPSTREAM_TIMEOUT_MS = 15000;
+    async function fetchUpstream(headers) {
+      const url = await getSignedUrl(content.fileKey, 60);
+      const controller = new AbortController();
+      const timer = setTimeout(() => controller.abort(), UPSTREAM_TIMEOUT_MS);
+      try {
+        return await fetch(url, { headers, signal: controller.signal });
+      } finally {
+        clearTimeout(timer);
+      }
+    }
+
     const headers = {};
     for (const name of ["range", "if-range", "if-none-match"]) {
       if (req.headers[name]) headers[name] = req.headers[name];
     }
-    const upstream = await fetch(signedUrl, { headers });
+    let upstream;
+    try {
+      upstream = await fetchUpstream(headers);
+    } catch {
+      try {
+        upstream = await fetchUpstream(headers);
+      } catch {
+        return res.status(502).end();
+      }
+    }
     if (!upstream.ok && upstream.status !== 206 && upstream.status !== 304) {
       return res.status(upstream.status === 404 ? 404 : 502).end();
     }

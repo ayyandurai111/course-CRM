@@ -30,12 +30,15 @@ function formatTime(seconds: number): string {
 }
 
 export default function VideoPlayerModal({ content, onClose }: { content: ContentItem; onClose: () => void }) {
-  const { url, error, loading } = useProtectedFile(content.id);
+  const { url, error, loading, refresh } = useProtectedFile(content.id);
   const videoRef = useRef<HTMLVideoElement>(null);
   const containerRef = useRef<HTMLDivElement>(null);
   const seekBarRef = useRef<HTMLDivElement>(null);
   const lastSaveRef = useRef(0);
   const hideTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const stallTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const retryCountRef = useRef(0);
+  const recoveringRef = useRef(false);
 
   const [playing, setPlaying] = useState(false);
   const [currentTime, setCurrentTime] = useState(0);
@@ -49,6 +52,9 @@ export default function VideoPlayerModal({ content, onClose }: { content: Conten
   const [controlsVisible, setControlsVisible] = useState(true);
   const [scrubbing, setScrubbing] = useState(false);
   const [ended, setEnded] = useState(false);
+  const [stuck, setStuck] = useState(false);
+  const [resumedFromSeconds, setResumedFromSeconds] = useState<number | null>(null);
+  const appliedResumeRef = useRef(false);
 
   // ---- Progress persistence (unchanged behavior from before) ----
   const saveProgress = useCallback(
@@ -82,6 +88,86 @@ export default function VideoPlayerModal({ content, onClose }: { content: Conten
   }, [scheduleHide]);
 
   useEffect(() => () => { if (hideTimerRef.current) clearTimeout(hideTimerRef.current); }, []);
+
+  // ---- Stuck/black-frame recovery ----
+  // The stream is proxied through our own backend (browser -> our API ->
+  // Supabase signed URL), which adds a hop that can transiently fail or
+  // hang without the <video> element ever surfacing a visible error —
+  // the symptom is a fully black player that never starts, previously
+  // only fixable by refreshing the whole page. A refresh "works" only
+  // because it mints a brand-new playback token and gives the video
+  // element a clean load; we can do the same thing in place instead.
+  const MAX_AUTO_RETRIES = 2;
+  const STALL_TIMEOUT_MS = 8000;
+
+  const clearStallTimer = useCallback(() => {
+    if (stallTimerRef.current) {
+      clearTimeout(stallTimerRef.current);
+      stallTimerRef.current = null;
+    }
+  }, []);
+
+  const recover = useCallback(
+    async (auto: boolean) => {
+      const v = videoRef.current;
+      if (!v || recoveringRef.current) return;
+      if (auto) {
+        if (retryCountRef.current >= MAX_AUTO_RETRIES) {
+          setStuck(true);
+          return;
+        }
+        retryCountRef.current += 1;
+      } else {
+        retryCountRef.current = 0;
+      }
+      recoveringRef.current = true;
+      setStuck(false);
+      try {
+        const resumeAt = v.currentTime;
+        await refresh(); // mints a fresh playback cookie for the same URL
+        // The src string never changes on refresh, so React won't reload
+        // it for us — force the element to re-request the resource now
+        // that a valid cookie exists.
+        v.load();
+        if (resumeAt > 0) {
+          const onLoaded = () => {
+            v.currentTime = resumeAt;
+            v.removeEventListener("loadedmetadata", onLoaded);
+          };
+          v.addEventListener("loadedmetadata", onLoaded);
+        }
+        if (playing) await v.play().catch(() => {});
+      } finally {
+        recoveringRef.current = false;
+      }
+    },
+    [refresh, playing]
+  );
+
+  function armStallWatchdog() {
+    clearStallTimer();
+    stallTimerRef.current = setTimeout(() => {
+      // Still not producing frames after a reasonable wait — treat this
+      // like a stuck/black player and try to recover automatically.
+      recover(true);
+    }, STALL_TIMEOUT_MS);
+  }
+
+  function handleVideoError() {
+    recover(true);
+  }
+
+  function handleWaiting() {
+    armStallWatchdog();
+  }
+
+  function handlePlaying() {
+    clearStallTimer();
+    retryCountRef.current = 0;
+    setStuck(false);
+  }
+
+  useEffect(() => clearStallTimer, [clearStallTimer]);
 
   // ---- Keyboard shortcuts ----
   useEffect(() => {
@@ -210,6 +296,7 @@ export default function VideoPlayerModal({ content, onClose }: { content: Conten
   function handleTimeUpdate() {
     const v = videoRef.current;
     if (!v) return;
+    clearStallTimer();
     if (!scrubbing) setCurrentTime(v.currentTime);
     if (v.buffered.length > 0) setBuffered(v.buffered.end(v.buffered.length - 1));
     if (!v.duration) return;
@@ -223,7 +310,12 @@ export default function VideoPlayerModal({ content, onClose }: { content: Conten
     <div className="fixed inset-0 z-50 flex items-center justify-center bg-ink-950/70 p-4" role="dialog" aria-modal="true">
       <div className="w-full max-w-3xl overflow-hidden rounded-xl2 bg-black shadow-2xl">
         <div className="flex items-center justify-between bg-ink-950 px-4 py-3">
-          <p className="truncate text-sm font-medium text-paper-50">{content.title}</p>
+          <div className="min-w-0">
+            <p className="truncate text-sm font-medium text-paper-50">{content.title}</p>
+            {resumedFromSeconds !== null && (
+              <p className="text-[11px] text-paper-50/60">Resumed from {formatTime(resumedFromSeconds)}</p>
+            )}
+          </div>
           <button onClick={onClose} aria-label="Close video" className="rounded-full p-1.5 text-paper-50 hover:bg-white/10">
             <XIcon className="h-4 w-4" />
           </button>
@@ -253,17 +345,48 @@ export default function VideoPlayerModal({ content, onClose }: { content: Conten
                 className="h-full w-full cursor-pointer"
                 onClick={togglePlay}
                 onDoubleClick={toggleFullscreen}
-                onLoadedMetadata={() => setDuration(videoRef.current?.duration || 0)}
+                onLoadedMetadata={() => {
+                  const v = videoRef.current;
+                  if (!v) return;
+                  setDuration(v.duration || 0);
+                  // Resume where the student left off last time they watched
+                  // this video (only once per mount — later loadedmetadata
+                  // firings, e.g. from stall recovery, must not jump back).
+                  if (!appliedResumeRef.current) {
+                    appliedResumeRef.current = true;
+                    const savedPosition = content.progress?.lastPositionSeconds;
+                    if (savedPosition && savedPosition > 5 && v.duration && savedPosition < v.duration - 5) {
+                      v.currentTime = savedPosition;
+                      setCurrentTime(savedPosition);
+                      setResumedFromSeconds(savedPosition);
+                    }
+                  }
+                }}
                 onDurationChange={() => setDuration(videoRef.current?.duration || 0)}
-                onPlay={() => { setPlaying(true); setEnded(false); wake(); }}
+                onPlay={() => { setPlaying(true); setEnded(false); wake(); armStallWatchdog(); }}
+                onPlaying={handlePlaying}
                 onPause={() => { setPlaying(false); setControlsVisible(true); }}
+                onWaiting={handleWaiting}
+                onError={handleVideoError}
                 onVolumeChange={() => { const v = videoRef.current; if (v) { setVolume(v.volume); setMuted(v.muted); } }}
                 onTimeUpdate={handleTimeUpdate}
                 onEnded={() => { setEnded(true); setControlsVisible(true); saveProgress(100, videoRef.current?.duration || 0); }}
               />
 
+              {stuck && (
+                <div className="absolute inset-0 flex flex-col items-center justify-center gap-3 bg-black/80 px-6 text-center">
+                  <p className="text-sm text-paper-50">This video is having trouble loading.</p>
+                  <button
+                    onClick={() => recover(false)}
+                    className="rounded-full bg-amber-400 px-4 py-1.5 text-xs font-semibold text-ink-950 hover:bg-amber-300"
+                  >
+                    Retry
+                  </button>
+                </div>
+              )}
+
               {/* Center play/pause tap target + big icon when paused/ended */}
-              {(!playing || ended) && (
+              {!stuck && (!playing || ended) && (
                 <button
                   onClick={togglePlay}
                   aria-label={playing ? "Pause" : "Play"}

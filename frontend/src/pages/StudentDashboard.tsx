@@ -10,14 +10,19 @@ import VideoPlayerModal from "../components/content/VideoPlayerModal";
 import PdfViewerModal from "../components/content/PdfViewerModal";
 import PostViewerModal from "../components/content/PostViewerModal";
 import { ErrorState, EmptyState } from "../components/common/States";
-import { StatCardsSkeleton, CardGridSkeleton } from "../components/common/Skeleton";
+import {
+  StatCardsSkeleton,
+  CardGridSkeleton,
+  UpcomingCoursesSkeleton,
+  UpcomingLessonsSkeleton,
+} from "../components/common/Skeleton";
 
 export default function StudentDashboard() {
   const { user } = useAuth();
   const [tab, setTab] = useState<ContentType | "ALL">("ALL");
   const [items, setItems] = useState<ContentItem[] | null>(null);
-  const [upcoming, setUpcoming] = useState<ContentItem[]>([]);
-  const [upcomingCourses, setUpcomingCourses] = useState<Course[]>([]);
+  const [upcoming, setUpcoming] = useState<ContentItem[] | null>(null);
+  const [upcomingCourses, setUpcomingCourses] = useState<Course[] | null>(null);
   const [subscription, setSubscription] = useState<Subscription | null>(null);
   const [progress, setProgress] = useState({ overallPercent: 0, total: 0 });
   const [error, setError] = useState<string | null>(null);
@@ -26,6 +31,9 @@ export default function StudentDashboard() {
 
   const load = useCallback(async () => {
     setError(null);
+    setUpcoming(null);
+    setUpcomingCourses(null);
+    setUpcomingCoursesError(null);
     try {
       const results = await Promise.allSettled([
         apiRequest<{ content: ContentItem[] }>(`/content${tab !== "ALL" ? `?type=${tab}` : ""}`),
@@ -102,7 +110,17 @@ export default function StudentDashboard() {
           </div>
         )}
 
-        {(upcomingCourses.length > 0 || upcomingCoursesError) && (
+        {upcomingCourses === null && !error && (
+          <section className="mt-8">
+            <div className="mb-3">
+              <p className="font-mono text-[10px] font-medium uppercase tracking-widest text-amber-600">Your learning path</p>
+              <h2 className="mt-1 font-display text-lg font-semibold text-ink-950">Upcoming Courses</h2>
+            </div>
+            <UpcomingCoursesSkeleton count={3} />
+          </section>
+        )}
+
+        {upcomingCourses !== null && (upcomingCourses.length > 0 || upcomingCoursesError) && (
           <section className="mt-8">
             <div className="mb-3 flex items-end justify-between gap-3">
               <div>
@@ -116,9 +134,13 @@ export default function StudentDashboard() {
             {upcomingCourses.length > 0 && <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-3">
               {upcomingCourses.map((course) => (
                 <article key={course.id} className="overflow-hidden rounded-xl2 border border-ink-900/8 bg-white shadow-card">
-                  <div className="aspect-[16/8] bg-ink-100">
+                  <div className="relative h-40 w-full overflow-hidden bg-ink-100">
                     {course.thumbnailUrl ? (
-                      <img src={course.thumbnailUrl} alt="" className="h-full w-full object-cover" />
+                      <img
+                        src={course.thumbnailUrl}
+                        alt=""
+                        className="absolute inset-0 block h-full w-full object-cover"
+                      />
                     ) : (
                       <div className="flex h-full items-center justify-center font-display text-2xl font-semibold text-ink-300">{course.title.slice(0, 1)}</div>
                     )}
@@ -137,7 +159,17 @@ export default function StudentDashboard() {
           </section>
         )}
 
-        {upcoming.length > 0 && (
+        {upcoming === null && !error && (
+          <section className="mt-8">
+            <div className="mb-3">
+              <p className="font-mono text-[10px] font-medium uppercase tracking-widest text-amber-600">Scheduled learning</p>
+              <h2 className="mt-1 font-display text-lg font-semibold text-ink-950">Upcoming Lessons</h2>
+            </div>
+            <UpcomingLessonsSkeleton count={3} />
+          </section>
+        )}
+
+        {upcoming !== null && upcoming.length > 0 && (
           <section className="mt-8">
             <div className="mb-3">
               <p className="font-mono text-[10px] font-medium uppercase tracking-widest text-amber-600">Scheduled learning</p>
@@ -163,7 +195,7 @@ export default function StudentDashboard() {
             <ContentTabs active={tab} onChange={setTab} />
           </div>
 
-          {items === null && !error && <CardGridSkeleton count={6} />}
+          {items === null && !error && <CardGridSkeleton count={6} mediaClassName="h-40 w-full" />}
           {error && <ErrorState message={error} onRetry={load} />}
           {items && items.length === 0 && (
             <EmptyState

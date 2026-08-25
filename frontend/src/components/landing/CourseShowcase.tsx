@@ -32,7 +32,7 @@ export default function CourseShowcase({ content }: { content: SiteContent["cour
         </h2>
       </div>
 
-      {courses === null && !error && <CardGridSkeleton count={3} />}
+      {courses === null && !error && <CardGridSkeleton count={3} mediaClassName="h-48 w-full" />}
       {error && <ErrorState message={error} onRetry={load} />}
       {courses && courses.length === 0 && (
         <EmptyState title="No courses published yet" description="Check back soon — new courses are added regularly." />
@@ -45,9 +45,13 @@ export default function CourseShowcase({ content }: { content: SiteContent["cour
               key={course.id}
               className="flex flex-col overflow-hidden rounded-xl2 border border-ink-900/8 bg-white shadow-card"
             >
-              <div className="aspect-[16/10] w-full bg-ink-100">
+              <div className="relative h-48 w-full overflow-hidden bg-ink-100">
                 {course.thumbnailUrl ? (
-                  <img src={course.thumbnailUrl} alt="" className="h-full w-full object-cover" />
+                  <img
+                    src={course.thumbnailUrl}
+                    alt=""
+                    className="absolute inset-0 block h-full w-full object-cover"
+                  />
                 ) : (
                   <div className="flex h-full items-center justify-center font-display text-2xl font-semibold text-ink-300">
                     {course.title.slice(0, 1)}

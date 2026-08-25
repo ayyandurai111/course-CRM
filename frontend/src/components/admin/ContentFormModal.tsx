@@ -2,6 +2,8 @@ import { useState, FormEvent, useEffect } from "react";
 import Modal from "../modals/Modal";
 import { Field, inputClass, PrimaryButton } from "../forms/FormFields";
 import { apiRequest, ApiError } from "../../lib/apiClient";
+import { useProtectedFile } from "../../hooks/useProtectedFile";
+import VideoThumbnailPicker from "./VideoThumbnailPicker";
 import type { Course, ContentItem, ContentType } from "../../types";
 
 export default function ContentFormModal({
@@ -23,6 +25,25 @@ export default function ContentFormModal({
   const [error, setError] = useState<string | null>(null);
   const [saving, setSaving] = useState(false);
   const [uploadProgress, setUploadProgress] = useState<string | null>(null);
+
+  // Local preview URL for a freshly-picked (not yet uploaded) video file,
+  // so the admin can pick a thumbnail frame from it before saving.
+  const [localVideoUrl, setLocalVideoUrl] = useState<string | null>(null);
+  useEffect(() => {
+    if (file && type === "VIDEO") {
+      const url = URL.createObjectURL(file);
+      setLocalVideoUrl(url);
+      return () => URL.revokeObjectURL(url);
+    }
+    setLocalVideoUrl(null);
+  }, [file, type]);
+
+  // For editing existing video content without replacing the file, load a
+  // protected playback URL so the same frame-picker can scrub the video
+  // that's already attached instead of only supporting brand-new uploads.
+  const existingVideoContentId = !file && type === "VIDEO" && content?.hasFile ? content.id : null;
+  const { url: existingVideoUrl } = useProtectedFile(existingVideoContentId);
+  const videoSrc = type === "VIDEO" ? localVideoUrl || existingVideoUrl : null;
 
   useEffect(() => {
     apiRequest<{ courses: Course[] }>("/courses/admin")
@@ -68,8 +89,10 @@ export default function ContentFormModal({
         // Only fall back to a raw external URL when no file was uploaded
         // for this POST — an uploaded file always wins since it's the
         // access-controlled path (private storage + signed URL), while
-        // imageUrl is a public link with no auth/expiry at all.
-        imageUrl: type === "POST" && !fileData ? imageUrl || undefined : undefined,
+        // imageUrl is a public link with no auth/expiry at all. VIDEO
+        // thumbnails always go through the upload flow (frame capture or
+        // custom image), never a raw external URL, so they're sent as-is.
+        imageUrl: type === "VIDEO" ? imageUrl || undefined : type === "POST" && !fileData ? imageUrl || undefined : undefined,
       };
       if (fileData) {
         body.fileKey = fileData.fileKey;
@@ -146,6 +169,14 @@ export default function ContentFormModal({
                 Uploading an image here keeps it private and access-controlled, same as videos/PDFs. Prefer this over a public URL below.
               </p>
             )}
+          </Field>
+        )}
+
+        {type === "VIDEO" && (
+          <Field label="Thumbnail" htmlFor="ct-thumb-picker">
+            <div id="ct-thumb-picker">
+              <VideoThumbnailPicker videoSrc={videoSrc} imageUrl={imageUrl} onImageUrlChange={setImageUrl} />
+            </div>
           </Field>
         )}
 

@@ -3,12 +3,7 @@ import { useNavigate } from "react-router-dom";
 import { useAuth } from "../../context/AuthContext";
 import type { Subscription } from "../../types";
 
-function formatDate(iso?: string | null) {
-  if (!iso) return "—";
-  return new Date(iso).toLocaleDateString(undefined, { year: "numeric", month: "short", day: "numeric" });
-}
-
-export default function DashboardHeader({ subscription }: { subscription: Subscription | null }) {
+export default function DashboardHeader({ subscription: _subscription }: { subscription: Subscription | null }) {
   const { user, logout } = useAuth();
   const navigate = useNavigate();
   const [menuOpen, setMenuOpen] = useState(false);
@@ -18,17 +13,6 @@ export default function DashboardHeader({ subscription }: { subscription: Subscr
       <div className="mx-auto flex max-w-6xl items-center justify-between px-5 py-4">
         <div>
           <span className="font-display text-lg font-semibold text-ink-950">Coursewell</span>
-        </div>
-
-        <div className="hidden text-right text-sm sm:block">
-          {subscription ? (
-            <p className="text-ink-500">
-              <span className="font-medium text-ink-900">{subscription.plan.name}</span> plan
-              {subscription.expiresAt && <> · valid until {formatDate(subscription.expiresAt)}</>}
-            </p>
-          ) : (
-            <p className="text-ink-500">No active plan</p>
-          )}
         </div>
 
         <div className="flex items-center gap-3">

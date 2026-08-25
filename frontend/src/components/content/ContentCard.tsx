@@ -20,14 +20,14 @@ export default function ContentCard({ item, onOpen }: { item: ContentItem; onOpe
 
   return (
     <article className="flex flex-col overflow-hidden rounded-xl2 border border-ink-900/8 bg-white shadow-card">
-      <div className="relative aspect-video w-full bg-ink-100">
+      <div className="relative h-40 w-full overflow-hidden bg-ink-100">
         {item.imageUrl ? (
           <img
             src={item.imageUrl}
             alt=""
             draggable={false}
             onContextMenu={(e) => e.preventDefault()}
-            className="h-full w-full select-none object-cover"
+            className="absolute inset-0 block h-full w-full select-none object-cover"
           />
         ) : (
           <div className="flex h-full items-center justify-center text-ink-300">

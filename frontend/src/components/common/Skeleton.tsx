@@ -29,19 +29,57 @@ export function StatCardsSkeleton({ count = 3 }: { count?: number }) {
   );
 }
 
-/** Media/content card grid — mirrors ContentCard / CourseShowcase cards. */
-export function CardGridSkeleton({ count = 6, withMedia = true }: { count?: number; withMedia?: boolean }) {
+/** Media/content card grid — mirrors ContentCard / CourseShowcase cards.
+ *  `mediaClassName` should match the real card's media container exactly
+ *  (height + any aspect classes) or the skeleton-to-content swap visibly
+ *  jumps once real data arrives. */
+export function CardGridSkeleton({ count = 6, withMedia = true, mediaClassName = "aspect-video w-full" }: { count?: number; withMedia?: boolean; mediaClassName?: string }) {
   return (
     <div className="grid gap-5 sm:grid-cols-2 lg:grid-cols-3" aria-busy="true" aria-label="Loading">
       {Array.from({ length: count }).map((_, i) => (
         <div key={i} className="overflow-hidden rounded-xl2 border border-ink-900/8 bg-white shadow-card">
-          {withMedia && <Skeleton className="aspect-video w-full rounded-none" />}
+          {withMedia && <Skeleton className={`rounded-none ${mediaClassName}`} />}
           <div className="p-4">
             <Skeleton className="h-3 w-20" />
             <Skeleton className="mt-2.5 h-4 w-3/4" />
             <SkeletonText lines={2} className="mt-2" />
             <Skeleton className="mt-4 h-9 w-full rounded-full" />
           </div>
+        </div>
+      ))}
+    </div>
+  );
+}
+
+
+/** Upcoming-course cards — mirrors StudentDashboard's scheduled course cards. */
+export function UpcomingCoursesSkeleton({ count = 3 }: { count?: number }) {
+  return (
+    <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-3" aria-busy="true" aria-label="Loading upcoming courses">
+      {Array.from({ length: count }).map((_, i) => (
+        <div key={i} className="overflow-hidden rounded-xl2 border border-ink-900/8 bg-white shadow-card">
+          <Skeleton className="h-40 w-full rounded-none" />
+          <div className="p-4">
+            <Skeleton className="h-3 w-20" />
+            <Skeleton className="mt-2.5 h-4 w-3/4" />
+            <SkeletonText lines={2} className="mt-2" />
+            <Skeleton className="mt-3 h-3 w-36" />
+          </div>
+        </div>
+      ))}
+    </div>
+  );
+}
+
+/** Upcoming-lesson rows — mirrors StudentDashboard's horizontal lesson cards. */
+export function UpcomingLessonsSkeleton({ count = 3 }: { count?: number }) {
+  return (
+    <div className="flex gap-3 overflow-x-auto pb-1" aria-busy="true" aria-label="Loading upcoming lessons">
+      {Array.from({ length: count }).map((_, i) => (
+        <div key={i} className="min-w-[220px] rounded-xl2 border border-dashed border-ink-300 bg-white p-4">
+          <Skeleton className="h-3 w-16" />
+          <Skeleton className="mt-2 h-4 w-36" />
+          <Skeleton className="mt-1 h-3 w-28" />
         </div>
       ))}
     </div>

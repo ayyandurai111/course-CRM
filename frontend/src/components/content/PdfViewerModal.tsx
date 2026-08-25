@@ -21,13 +21,14 @@ export default function PdfViewerModal({ content, onClose }: { content: ContentI
   const canvasRef = useRef<HTMLCanvasElement>(null);
   const docRef = useRef<PDFDocumentProxy | null>(null);
   const renderTaskRef = useRef<{ cancel: () => void } | null>(null);
-  const viewedRef = useRef(false);
+  const lastSavedPageRef = useRef<number | null>(null);
 
   const [pageCount, setPageCount] = useState(0);
   const [page, setPage] = useState(1);
   const [zoom, setZoom] = useState(1);
   const [docLoading, setDocLoading] = useState(true);
   const [renderError, setRenderError] = useState<string | null>(null);
+  const [resumedFromPage, setResumedFromPage] = useState<number | null>(null);
 
   // Close on Escape.
   useEffect(() => {
@@ -53,17 +54,16 @@ export default function PdfViewerModal({ content, onClose }: { content: ContentI
         if (cancelled) return;
         docRef.current = doc;
         setPageCount(doc.numPages);
-        setPage(1);
-        setDocLoading(false);
 
-        // Read status is a simple "opened" flag — an embedded viewer can't
-        // reliably tell us how much the student actually read, so we mark
-        // it viewed once the document is available rather than fake a
-        // page-based percentage.
-        if (!viewedRef.current) {
-          viewedRef.current = true;
-          apiRequest(`/content/${content.id}/progress`, { method: "POST", body: { viewed: true, progressPercent: 100 } }).catch(() => {});
-        }
+        // Resume where the reader left off last time. `lastPositionSeconds`
+        // is video-shaped naming from a shared progress model, but for PDFs
+        // it just holds the last page number they had open — there's no
+        // literal "time position" concept for a document.
+        const savedPage = content.progress?.lastPositionSeconds;
+        const startPage = savedPage && savedPage > 1 && savedPage <= doc.numPages ? Math.round(savedPage) : 1;
+        setPage(startPage);
+        if (startPage > 1) setResumedFromPage(startPage);
+        setDocLoading(false);
       })
       .catch((err) => {
         if (!cancelled) {
@@ -77,7 +77,23 @@ export default function PdfViewerModal({ content, onClose }: { content: ContentI
       docRef.current?.destroy();
       docRef.current = null;
     };
-  }, [url, content.id]);
+  }, [url, content.id, content.progress?.lastPositionSeconds]);
+
+  // Save reading progress every time the page changes, so reopening this
+  // PDF later resumes here instead of restarting from page 1. Percent is
+  // derived from page/pageCount, same "completion" shape the video player
+  // uses; the server marks it viewed once that reaches 100.
+  useEffect(() => {
+    if (docLoading || !pageCount || lastSavedPageRef.current === page) return;
+    lastSavedPageRef.current = page;
+    const progressPercent = Math.round((page / pageCount) * 100);
+    apiRequest(`/content/${content.id}/progress`, {
+      method: "POST",
+      body: { progressPercent, lastPositionSeconds: page },
+    }).catch(() => {
+      // Non-critical — progress will sync on the next page change or view.
+    });
+  }, [page, pageCount, docLoading, content.id]);
 
   // Render the current page whenever page/zoom changes.
   useEffect(() => {
@@ -116,7 +132,10 @@ export default function PdfViewerModal({ content, onClose }: { content: ContentI
     <div className="fixed inset-0 z-50 flex items-center justify-center bg-ink-950/70 p-4" role="dialog" aria-modal="true">
       <div className="flex h-[85vh] w-full max-w-3xl flex-col overflow-hidden rounded-xl2 bg-white shadow-2xl">
         <div className="flex items-center justify-between border-b border-ink-900/8 px-4 py-3">
-          <p className="truncate text-sm font-medium text-ink-900">{content.title}</p>
+          <div className="min-w-0">
+            <p className="truncate text-sm font-medium text-ink-900">{content.title}</p>
+            {resumedFromPage && <p className="text-[11px] text-ink-500">Resumed from page {resumedFromPage}</p>}
+          </div>
           <button onClick={onClose} aria-label="Close PDF" className="rounded-full p-1.5 text-ink-500 hover:bg-ink-100">
             <XIcon className="h-4 w-4" />
           </button>
