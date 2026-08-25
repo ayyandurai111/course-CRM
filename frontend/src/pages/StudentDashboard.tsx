@@ -1,4 +1,4 @@
-import { useEffect, useState, useCallback } from "react";
+import { useEffect, useState, useCallback, useRef } from "react";
 import { apiRequest, ApiError } from "../lib/apiClient";
 import { useAuth } from "../context/AuthContext";
 import type { ContentItem, ContentType, Course, Subscription } from "../types";
@@ -16,6 +16,7 @@ import {
   UpcomingCoursesSkeleton,
   UpcomingLessonsSkeleton,
 } from "../components/common/Skeleton";
+import { StudentDashboardSkeletonShell } from "../components/common/PageSkeletons";
 
 export default function StudentDashboard() {
   const { user } = useAuth();
@@ -28,6 +29,16 @@ export default function StudentDashboard() {
   const [error, setError] = useState<string | null>(null);
   const [upcomingCoursesError, setUpcomingCoursesError] = useState<string | null>(null);
   const [active, setActive] = useState<ContentItem | null>(null);
+  // True once the very first load has settled (success or failure). Until
+  // then we show one full-page skeleton (matching the shell shown during
+  // the auth check) instead of the real header — otherwise the greeting
+  // ("Hello, Name") renders immediately from the already-known user object
+  // while the stats/content below are still skeletons, which reads as a
+  // half-loaded page. Only gates the *first* load: later refreshes (tab
+  // switches, closing a video) keep the real header and just skeleton the
+  // section that's actually refetching.
+  const initialLoadDoneRef = useRef(false);
+  const [initialLoadDone, setInitialLoadDone] = useState(false);
 
   const load = useCallback(async (opts: { silent?: boolean } = {}) => {
     setError(null);
@@ -74,6 +85,11 @@ export default function StudentDashboard() {
       }
     } catch (err) {
       setError(err instanceof ApiError ? err.message : "Couldn't load your dashboard right now.");
+    } finally {
+      if (!initialLoadDoneRef.current) {
+        initialLoadDoneRef.current = true;
+        setInitialLoadDone(true);
+      }
     }
   }, [tab]);
 
@@ -90,6 +106,11 @@ export default function StudentDashboard() {
     setActive(null);
     load({ silent: true });
   }
+
+  // Not loaded yet, and no error to show — keep this identical to the
+  // shell shown during the auth check (App.tsx) so there's exactly one
+  // skeleton state, then a direct swap to the real page once data lands.
+  if (!initialLoadDone && !error) return <StudentDashboardSkeletonShell />;
 
   return (
     <div className="min-h-screen bg-paper-50 pb-20">
