@@ -81,12 +81,17 @@ export default function VideoPlayerModal({ content, onClose }: { content: Conten
   // of where the student actually left off.
   const flushProgress = useCallback(() => {
     const v = videoRef.current;
-    if (!v || !v.duration) return;
-    saveProgress((v.currentTime / v.duration) * 100, v.currentTime, true);
+    if (!v || !v.duration) return Promise.resolve();
+    return saveProgress((v.currentTime / v.duration) * 100, v.currentTime, true);
   }, [saveProgress]);
 
-  const handleClose = useCallback(() => {
-    flushProgress();
+  const handleClose = useCallback(async () => {
+    // Wait for the save to actually land before closing. Firing it and
+    // closing immediately raced against the parent's post-close list
+    // refresh (GET /content) — if that GET resolved before this POST had
+    // written the new position, the refreshed list still carried the old
+    // value, and reopening the video resumed from the stale position.
+    await flushProgress();
     onClose();
   }, [flushProgress, onClose]);
 
