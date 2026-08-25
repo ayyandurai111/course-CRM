@@ -29,10 +29,17 @@ export default function StudentDashboard() {
   const [upcomingCoursesError, setUpcomingCoursesError] = useState<string | null>(null);
   const [active, setActive] = useState<ContentItem | null>(null);
 
-  const load = useCallback(async () => {
+  const load = useCallback(async (opts: { silent?: boolean } = {}) => {
     setError(null);
-    setUpcoming(null);
-    setUpcomingCourses(null);
+    // On a background refresh (e.g. after closing a video/PDF modal) keep
+    // whatever's already on screen instead of blanking it back to a
+    // skeleton — that data almost never changed, and re-flashing it every
+    // time you close a piece of content just makes the page feel like it
+    // reloads on every action.
+    if (!opts.silent) {
+      setUpcoming(null);
+      setUpcomingCourses(null);
+    }
     setUpcomingCoursesError(null);
     try {
       const results = await Promise.allSettled([
@@ -81,7 +88,7 @@ export default function StudentDashboard() {
 
   function closeAndRefresh() {
     setActive(null);
-    load();
+    load({ silent: true });
   }
 
   return (

@@ -1,4 +1,4 @@
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import { useNavigate } from "react-router-dom";
 import { useAuth } from "../context/AuthContext";
 import AdminSidebar, { AdminSection } from "../components/admin/AdminSidebar";
@@ -13,6 +13,19 @@ export default function AdminPanel() {
   const { user, logout } = useAuth();
   const navigate = useNavigate();
   const [section, setSection] = useState<AdminSection>("overview");
+  // Each section fetches its own data on mount. Rendering only the active
+  // section (`section === "x" && <XSection />`) would unmount the others,
+  // throwing away what they'd already loaded — so switching back to a
+  // previously-visited tab always re-showed a skeleton and re-fetched from
+  // scratch. Instead, once a section has been visited it stays mounted
+  // (just hidden) so its state survives tab switches; sections never
+  // visited still aren't mounted, so we don't fetch data the user hasn't
+  // asked to see.
+  const [visited, setVisited] = useState<Set<AdminSection>>(() => new Set(["overview"]));
+
+  useEffect(() => {
+    setVisited((prev) => (prev.has(section) ? prev : new Set(prev).add(section)));
+  }, [section]);
 
   async function handleLogout() {
     await logout();
@@ -34,12 +47,12 @@ export default function AdminPanel() {
       <div className="mx-auto flex max-w-7xl flex-col md:flex-row">
         <AdminSidebar active={section} onChange={setSection} />
         <main className="flex-1 px-5 py-6 md:px-8 md:py-8">
-          {section === "overview" && <OverviewSection />}
-          {section === "courses" && <CoursesSection />}
-          {section === "content" && <ContentSection />}
-          {section === "students" && <StudentsSection />}
-          {section === "plans" && <PlansSection />}
-          {section === "site" && <SiteContentSection />}
+          {visited.has("overview") && <div hidden={section !== "overview"}><OverviewSection /></div>}
+          {visited.has("courses") && <div hidden={section !== "courses"}><CoursesSection /></div>}
+          {visited.has("content") && <div hidden={section !== "content"}><ContentSection /></div>}
+          {visited.has("students") && <div hidden={section !== "students"}><StudentsSection /></div>}
+          {visited.has("plans") && <div hidden={section !== "plans"}><PlansSection /></div>}
+          {visited.has("site") && <div hidden={section !== "site"}><SiteContentSection /></div>}
         </main>
       </div>
     </div>

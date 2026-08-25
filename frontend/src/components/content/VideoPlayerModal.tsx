@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import { useProtectedFile } from "../../hooks/useProtectedFile";
-import { apiRequest } from "../../lib/apiClient";
+import { apiRequest, getToken } from "../../lib/apiClient";
 import type { ContentItem } from "../../types";
 import { ErrorState } from "../common/States";
 import { Skeleton } from "../common/Skeleton";
@@ -58,9 +58,9 @@ export default function VideoPlayerModal({ content, onClose }: { content: Conten
 
   // ---- Progress persistence (unchanged behavior from before) ----
   const saveProgress = useCallback(
-    async (percent: number, positionSeconds: number) => {
+    async (percent: number, positionSeconds: number, force = false) => {
       const now = Date.now();
-      if (now - lastSaveRef.current < 4000 && percent < 100) return;
+      if (!force && now - lastSaveRef.current < 4000 && percent < 100) return;
       lastSaveRef.current = now;
       try {
         await apiRequest(`/content/${content.id}/progress`, {
@@ -73,6 +73,80 @@ export default function VideoPlayerModal({ content, onClose }: { content: Conten
     },
     [content.id]
   );
+
+  // Flush the most recent playback position immediately, bypassing the
+  // periodic throttle. Without this, closing the player shortly after the
+  // last auto-save (up to ~4s of watch time) silently drops that progress,
+  // so reopening the video resumes from the stale saved position instead
+  // of where the student actually left off.
+  const flushProgress = useCallback(() => {
+    const v = videoRef.current;
+    if (!v || !v.duration) return;
+    saveProgress((v.currentTime / v.duration) * 100, v.currentTime, true);
+  }, [saveProgress]);
+
+  const handleClose = useCallback(() => {
+    flushProgress();
+    onClose();
+  }, [flushProgress, onClose]);
+
+  // Safety net: also flush on unmount (covers any close path that doesn't
+  // go through handleClose) and when the tab is hidden/backgrounded.
+  useEffect(() => {
+    function onVisibility() {
+      if (document.hidden) flushProgress();
+    }
+    document.addEventListener("visibilitychange", onVisibility);
+    return () => {
+      document.removeEventListener("visibilitychange", onVisibility);
+      flushProgress();
+    };
+  }, [flushProgress]);
+
+  // ---- Browser/tab close ----
+  // When the whole page is being torn down (tab closed, browser quit,
+  // hard navigation), a normal `await apiRequest(...)` can get killed
+  // mid-flight before the request is even sent — the JS engine doesn't
+  // wait around for it. `fetch(..., { keepalive: true })` is built for
+  // exactly this case: the browser keeps the request alive independently
+  // of the page that started it. apiRequest also fetches a fresh auth
+  // token asynchronously on every call, which won't resolve in time
+  // during unload, so the token is cached ahead of time instead.
+  const tokenRef = useRef<string | null>(null);
+  useEffect(() => {
+    getToken().then((t) => { tokenRef.current = t; }).catch(() => {});
+  }, []);
+
+  const keepaliveFlush = useCallback(() => {
+    const v = videoRef.current;
+    if (!v || !v.duration) return;
+    const percent = (v.currentTime / v.duration) * 100;
+    const headers: Record<string, string> = { "Content-Type": "application/json" };
+    if (tokenRef.current) headers.Authorization = `Bearer ${tokenRef.current}`;
+    try {
+      fetch(`/api/content/${content.id}/progress`, {
+        method: "POST",
+        headers,
+        keepalive: true,
+        body: JSON.stringify({
+          progressPercent: Math.round(percent),
+          lastPositionSeconds: Math.round(v.currentTime),
+          viewed: percent >= 95,
+        }),
+      }).catch(() => {});
+    } catch {
+      // keepalive requests are best-effort — nothing to recover from here.
+    }
+  }, [content.id]);
+
+  useEffect(() => {
+    document.addEventListener("pagehide", keepaliveFlush);
+    window.addEventListener("beforeunload", keepaliveFlush);
+    return () => {
+      document.removeEventListener("pagehide", keepaliveFlush);
+      window.removeEventListener("beforeunload", keepaliveFlush);
+    };
+  }, [keepaliveFlush]);
 
   // ---- Auto-hide controls ----
   const scheduleHide = useCallback(() => {
@@ -174,7 +248,7 @@ export default function VideoPlayerModal({ content, onClose }: { content: Conten
     function onKey(e: KeyboardEvent) {
       if (e.key === "Escape") {
         if (document.fullscreenElement) document.exitFullscreen().catch(() => {});
-        else onClose();
+        else handleClose();
         return;
       }
       const v = videoRef.current;
@@ -212,7 +286,7 @@ export default function VideoPlayerModal({ content, onClose }: { content: Conten
     document.addEventListener("keydown", onKey);
     return () => document.removeEventListener("keydown", onKey);
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [onClose]);
+  }, [handleClose]);
 
   useEffect(() => {
     function onFsChange() { setFullscreen(!!document.fullscreenElement); }
@@ -316,7 +390,7 @@ export default function VideoPlayerModal({ content, onClose }: { content: Conten
               <p className="text-[11px] text-paper-50/60">Resumed from {formatTime(resumedFromSeconds)}</p>
             )}
           </div>
-          <button onClick={onClose} aria-label="Close video" className="rounded-full p-1.5 text-paper-50 hover:bg-white/10">
+          <button onClick={handleClose} aria-label="Close video" className="rounded-full p-1.5 text-paper-50 hover:bg-white/10">
             <XIcon className="h-4 w-4" />
           </button>
         </div>
