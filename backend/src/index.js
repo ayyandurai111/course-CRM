@@ -82,7 +82,16 @@ app.use(
         fontSrc: ["'self'", "https://fonts.gstatic.com"],
         imgSrc: ["'self'", ...supabaseSources, ...(process.env.ALLOWED_IMAGE_ORIGINS || "").split(",").map((v) => v.trim()).filter(Boolean)],
         connectSrc: ["'self'", ...supabaseSources],
-        mediaSrc: ["'self'", ...supabaseSources],
+        // "blob:" is required for the admin's video-thumbnail scrubber
+        // (VideoThumbnailPicker), which loads a freshly-picked, not-yet-
+        // uploaded video file into a <video> via URL.createObjectURL()
+        // so a frame can be captured client-side before the file is sent
+        // to the server. This is safe to allow broadly: a blob: URL can
+        // only ever reference same-origin-created, in-memory data (the
+        // File object the user just selected via <input type="file">)
+        // — it is not a way for a remote/attacker-controlled origin to
+        // inject arbitrary media.
+        mediaSrc: ["'self'", "blob:", ...supabaseSources],
         frameSrc: ["'self'", ...supabaseSources],
         objectSrc: ["'none'"],
         baseUri: ["'self'"],
