@@ -108,18 +108,36 @@ router.get("/stream/:contentId", async (req, res, next) => {
       return res.status(401).json({ error: "Playback session expired. Please reopen the content." });
     }
 
-    const result = await loadAuthorizedContent(req.params.contentId, claims.sub, "ADMIN" === claims.role ? "ADMIN" : "STUDENT");
-    if (result.status) return res.status(result.status).end();
-    const content = result.content;
-
-    // Re-check the user's current access on every media request. This means
-    // suspension/plan revocation stops subsequent range requests immediately.
-    const { data: profile, error: profileError } = await supabase.from("users").select("role,is_active").eq("id", claims.sub).maybeSingle();
+    // Perf note: this route runs on EVERY range request the <video>/<iframe>
+    // makes while buffering/seeking — not just once per open — so any
+    // per-request cost here is paid many times over the life of a single
+    // playback session. Previously this did the full access check TWICE
+    // (once inside loadAuthorizedContent below, again explicitly after)
+    // plus a separate Storage `.list()` existence check on every single
+    // chunk, which visibly delayed the start of playback. Fixed by:
+    //   1. Loading the content row and the user's live profile in
+    //      parallel (they're independent reads) instead of sequentially.
+    //   2. Running the access check exactly once, using the fresh
+    //      profile — still re-verified on every request (so
+    //      suspension/plan revocation still stops playback immediately,
+    //      per the original spec requirement), just no longer duplicated.
+    //   3. Dropping the separate fileExists() Storage call from this hot
+    //      path — fetchUpstream() below already surfaces a missing file
+    //      as a natural 404 from the actual read, so the extra
+    //      existence pre-check added a whole network round trip for no
+    //      behavioral difference. (It's still done once, in loadAuthorizedContent,
+    //      for the /playback route below, which only runs once per open.)
+    const [{ data: contentData, error: contentError }, { data: profile, error: profileError }] = await Promise.all([
+      supabase.from("content").select("*").eq("id", req.params.contentId).maybeSingle(),
+      supabase.from("users").select("role,is_active").eq("id", claims.sub).maybeSingle(),
+    ]);
+    assertNoError(contentError, "Failed to load content");
     assertNoError(profileError, "Failed to verify playback account");
+    if (!contentData || !contentData.file_key) return res.status(404).end();
+    const content = row(contentData);
+
     if (!profile?.is_active) return res.status(401).end();
-    if (profile.role === "ADMIN") {
-      // Current admin status is authoritative; no student-plan check needed.
-    } else {
+    if (profile.role !== "ADMIN") {
       const allowed = await userCanAccessContent(claims.sub, content);
       if (!allowed) return res.status(403).end();
     }
