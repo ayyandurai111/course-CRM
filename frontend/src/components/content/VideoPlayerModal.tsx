@@ -55,6 +55,7 @@ export default function VideoPlayerModal({ content, onClose }: { content: Conten
   const [stuck, setStuck] = useState(false);
   const [resumedFromSeconds, setResumedFromSeconds] = useState<number | null>(null);
   const appliedResumeRef = useRef(false);
+  const hasAutoStartedRef = useRef(false);
 
   // ---- Progress persistence (unchanged behavior from before) ----
   const saveProgress = useCallback(
@@ -414,7 +415,6 @@ export default function VideoPlayerModal({ content, onClose }: { content: Conten
               <video
                 ref={videoRef}
                 src={url}
-                autoPlay
                 playsInline
                 preload="metadata"
                 disablePictureInPicture
@@ -431,14 +431,43 @@ export default function VideoPlayerModal({ content, onClose }: { content: Conten
                   // Resume where the student left off last time they watched
                   // this video (only once per mount — later loadedmetadata
                   // firings, e.g. from stall recovery, must not jump back).
+                  //
+                  // Two things matter here, in order:
+                  // 1. `lastPositionSeconds` comes from a Postgres `numeric`
+                  //    column, which Supabase/PostgREST can serialize as a
+                  //    JSON string (e.g. "125" instead of 125) — Number(...)
+                  //    it explicitly rather than trusting the type.
+                  // 2. The seek MUST land before playback starts. Previously
+                  //    the <video> had a plain `autoPlay` attribute, so the
+                  //    browser could start decoding/rendering frame 0 before
+                  //    this handler ran, racing our currentTime assignment.
+                  //    Now we drive play() ourselves, after the seek, so
+                  //    there's no window where frame 0 can render first.
                   if (!appliedResumeRef.current) {
                     appliedResumeRef.current = true;
-                    const savedPosition = content.progress?.lastPositionSeconds;
-                    if (savedPosition && savedPosition > 5 && v.duration && savedPosition < v.duration - 5) {
+                    const savedPositionRaw = content.progress?.lastPositionSeconds;
+                    const savedPosition = savedPositionRaw != null ? Number(savedPositionRaw) : null;
+                    if (
+                      savedPosition != null &&
+                      Number.isFinite(savedPosition) &&
+                      savedPosition > 5 &&
+                      v.duration &&
+                      savedPosition < v.duration - 5
+                    ) {
                       v.currentTime = savedPosition;
                       setCurrentTime(savedPosition);
                       setResumedFromSeconds(savedPosition);
                     }
+                  }
+                  // Auto-start playback ourselves, exactly once, after the
+                  // seek above has landed. Stall recovery also reloads the
+                  // video (v.load()) and fires this same event again with
+                  // its own conditional play() call gated on whether the
+                  // video was actually playing before the stall — that one
+                  // must win on subsequent loads, so this only fires once.
+                  if (!hasAutoStartedRef.current) {
+                    hasAutoStartedRef.current = true;
+                    v.play().catch(() => {});
                   }
                 }}
                 onDurationChange={() => setDuration(videoRef.current?.duration || 0)}

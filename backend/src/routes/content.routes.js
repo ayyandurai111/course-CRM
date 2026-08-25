@@ -68,7 +68,11 @@ router.get("/", authenticate, async (req, res, next) => {
         hasFile: !!fileKey,
         course: coursesById.get(item.courseId) || null,
         progress: progress
-          ? { percent: progress.progressPercent || 0, viewed: !!progress.viewed, lastPositionSeconds: progress.lastPositionSeconds ?? null }
+          ? {
+              percent: Number(progress.progressPercent) || 0,
+              viewed: !!progress.viewed,
+              lastPositionSeconds: progress.lastPositionSeconds != null ? Number(progress.lastPositionSeconds) : null,
+            }
           : { percent: 0, viewed: false, lastPositionSeconds: null },
       };
     });
