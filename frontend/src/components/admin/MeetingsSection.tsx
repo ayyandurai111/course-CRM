@@ -59,6 +59,7 @@ export default function MeetingsSection() {
   const [busy, setBusy] = useState(false);
   const [publishingId, setPublishingId] = useState<string | null>(null);
   const [previewMeeting, setPreviewMeeting] = useState<Meeting | null>(null);
+  const [startingId, setStartingId] = useState<string | null>(null);
   const navigate = useNavigate();
 
   async function load() {
@@ -91,10 +92,24 @@ export default function MeetingsSection() {
   }
 
   async function startMeeting(id: string) {
+    // Guard against double-clicks / duplicate submits: without this, two
+    // POST /start requests can fire before the first one's response (and
+    // the resulting navigate() away from this list) lands. The server's
+    // race-condition guard correctly lets only one succeed, but the
+    // loser's own catch used to alert() *after* we'd already navigated
+    // to /meeting/:id for the winner — surfacing a confusing "Meeting is
+    // not in a startable state" popup on top of the meeting room you'd
+    // just successfully joined.
+    if (startingId) return;
+    setStartingId(id);
     try {
       await apiRequest(`/meetings/${id}/start`, { method: "POST" });
       navigate(`/meeting/${id}`);
-    } catch (err) { alert(err instanceof ApiError ? err.message : "Couldn't start meeting."); }
+    } catch (err) {
+      alert(err instanceof ApiError ? err.message : "Couldn't start meeting.");
+    } finally {
+      setStartingId(null);
+    }
   }
 
   async function endMeeting(id: string) {
@@ -178,7 +193,7 @@ export default function MeetingsSection() {
                 <p className="mt-1 text-xs font-medium text-ink-600">{new Date(m.scheduledAt).toLocaleString()}</p>
                 {m.recordingStatus !== "NONE" && <p className="mt-1">{recordingBadge(m)}</p>}
                 <div className="mt-3 flex flex-wrap gap-4 border-t border-ink-900/8 pt-3">
-                  {m.status === "SCHEDULED" && <button onClick={() => startMeeting(m.id)} className="text-sm font-semibold text-emerald-700">Start</button>}
+                  {m.status === "SCHEDULED" && <button onClick={() => startMeeting(m.id)} disabled={startingId === m.id} className="text-sm font-semibold text-emerald-700 disabled:opacity-50">{startingId === m.id ? "Starting…" : "Start"}</button>}
                   {m.status === "LIVE" && (
                     <>
                       <button onClick={() => navigate(`/meeting/${m.id}`)} className="text-sm font-semibold text-amber-700">Join</button>
@@ -203,7 +218,7 @@ export default function MeetingsSection() {
                   <td className="px-5 py-3 text-ink-500">{new Date(m.scheduledAt).toLocaleString()}</td>
                   <td className="px-5 py-3"><span className="rounded-full bg-ink-100 px-2.5 py-1 text-xs font-medium text-ink-600">{m.status}</span>{recordingBadge(m)}</td>
                   <td className="px-5 py-3"><div className="flex flex-wrap justify-end gap-3">
-                    {m.status === "SCHEDULED" && <button onClick={() => startMeeting(m.id)} className="text-sm font-semibold text-emerald-700">Start</button>}
+                    {m.status === "SCHEDULED" && <button onClick={() => startMeeting(m.id)} disabled={startingId === m.id} className="text-sm font-semibold text-emerald-700 disabled:opacity-50">{startingId === m.id ? "Starting…" : "Start"}</button>}
                     {m.status === "LIVE" && <><button onClick={() => navigate(`/meeting/${m.id}`)} className="text-sm font-semibold text-amber-700">Join</button><button onClick={() => endMeeting(m.id)} className="text-sm font-semibold text-red-600">End</button></>}
                     {recordingActions(m)}
                     {m.status === "SCHEDULED" && <button onClick={() => deleteMeeting(m.id)} className="text-sm font-semibold text-red-600">Delete</button>}

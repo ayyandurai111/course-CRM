@@ -73,14 +73,28 @@ try {
   supabaseOrigin = null;
 }
 const supabaseSources = supabaseOrigin ? [supabaseOrigin] : [];
-let liveKitOrigin = null;
+// The LiveKit JS SDK doesn't only open the wss:// room-signaling
+// connection — it also does a plain HTTPS fetch to the *same host*'s
+// `/settings/regions` endpoint for region discovery before connecting.
+// `new URL("wss://host").origin` yields the origin "wss://host", and
+// CSP source matching is scheme-sensitive, so that alone does NOT
+// authorize a "https://host" fetch to the identical host. Without the
+// https:// counterpart in connect-src, the browser blocks the regions
+// request ("Refused to connect... violates the document's Content
+// Security Policy"), which breaks joining/starting meetings on
+// LiveKit Cloud. So both scheme variants of the LiveKit host must be
+// allowed.
+let liveKitSources = [];
 try {
   const configuredLiveKitUrl = process.env.LIVEKIT_WS_URL || process.env.LIVEKIT_URL || "";
-  liveKitOrigin = configuredLiveKitUrl ? new URL(configuredLiveKitUrl).origin : null;
+  if (configuredLiveKitUrl) {
+    const host = new URL(configuredLiveKitUrl).host;
+    const isSecure = /^wss:|^https:/.test(configuredLiveKitUrl);
+    liveKitSources = isSecure ? [`https://${host}`, `wss://${host}`] : [`http://${host}`, `ws://${host}`];
+  }
 } catch {
-  liveKitOrigin = null;
+  liveKitSources = [];
 }
-const liveKitSources = liveKitOrigin ? [liveKitOrigin] : [];
 
 app.use(
   helmet({

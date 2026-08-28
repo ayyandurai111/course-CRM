@@ -1,8 +1,9 @@
 import { StatCardsSkeleton, UpcomingCoursesSkeleton, ListRowsSkeleton, Skeleton } from "./Skeleton";
 
 /** Dark-surface pulse block for skeletons that sit on the meeting room's
- *  ink-950 background, where the light-mode gray-300 Skeleton would look
- *  out of place. Kept local to this file since it's the only dark shell. */
+ *  ink-950 background, where the light-mode Skeleton (ink-tinted for white
+ *  cards) would still look out of place. Kept local to this file since
+ *  it's the only dark shell. */
 function DarkSkeleton({ className = "" }: { className?: string }) {
   return <div className={`animate-pulse rounded-md bg-white/10 ${className}`} aria-hidden="true" />;
 }
@@ -21,7 +22,7 @@ export function StudentDashboardSkeletonShell() {
       <header className="sticky top-0 z-30 border-b border-ink-900/8 bg-paper-50/90 backdrop-blur-md">
         <div className="mx-auto flex max-w-6xl items-center justify-between px-5 py-4">
           <span className="font-display text-lg font-semibold text-ink-950">Coursewell</span>
-          <div className="h-9 w-9 animate-pulse rounded-full bg-gray-300" />
+          <div className="h-9 w-9 animate-pulse rounded-full bg-ink-900/10" />
         </div>
       </header>
       <main className="mx-auto max-w-6xl px-5 py-8">
@@ -91,7 +92,7 @@ export function AdminPanelSkeletonShell() {
     <div className="min-h-screen bg-paper-50">
       <header className="sticky top-0 z-30 flex items-center justify-between border-b border-ink-900/8 bg-white px-5 py-3">
         <span className="font-display text-lg font-semibold text-ink-950">Coursewell Admin</span>
-        <div className="h-8 w-8 animate-pulse rounded-full bg-gray-300" />
+        <div className="h-8 w-8 animate-pulse rounded-full bg-ink-900/10" />
       </header>
       <div className="mx-auto flex max-w-7xl flex-col md:flex-row">
         <nav className="flex gap-1 overflow-x-auto border-b border-ink-900/8 bg-white px-3 py-2 md:w-56 md:flex-col md:overflow-visible md:border-b-0 md:border-r md:px-3 md:py-6">
