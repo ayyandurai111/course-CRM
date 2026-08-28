@@ -34,6 +34,7 @@ export default function MeetingRoom({ token, wsUrl, meeting, onLeave, isAdmin }:
   const [messages, setMessages] = useState<ChatMessage[]>([]);
   const [error, setError] = useState<string | null>(null);
   const [moderationBusy, setModerationBusy] = useState<string | null>(null);
+  const [connectionState, setConnectionState] = useState<string>("connecting");
 
   useEffect(() => {
     let active = true;
@@ -53,19 +54,79 @@ export default function MeetingRoom({ token, wsUrl, meeting, onLeave, isAdmin }:
 
     room.on(RoomEvent.TrackSubscribed, rerender);
     room.on(RoomEvent.TrackUnsubscribed, rerender);
-    room.on(RoomEvent.ParticipantConnected, rerender);
+    room.on(RoomEvent.TrackPublished, rerender);
+    room.on(RoomEvent.TrackUnpublished, rerender);
+    room.on(RoomEvent.TrackStreamStateChanged, rerender);
+    room.on(RoomEvent.ParticipantMetadataChanged, rerender);
+    room.on(RoomEvent.ParticipantNameChanged, rerender);
+    room.on(RoomEvent.ParticipantConnected, (participant) => {
+      for (const publication of participant.videoTrackPublications.values()) {
+        if (!publication.isSubscribed) void publication.setSubscribed(true);
+      }
+      for (const publication of participant.audioTrackPublications.values()) {
+        if (!publication.isSubscribed) void publication.setSubscribed(true);
+      }
+      rerender();
+    });
     room.on(RoomEvent.ParticipantDisconnected, rerender);
     room.on(RoomEvent.LocalTrackPublished, rerender);
     room.on(RoomEvent.LocalTrackUnpublished, rerender);
     room.on(RoomEvent.TrackMuted, rerender);
     room.on(RoomEvent.TrackUnmuted, rerender);
     room.on(RoomEvent.DataReceived, onData);
-    room.on(RoomEvent.Disconnected, () => active && setConnected(false));
+    room.on(RoomEvent.Connected, () => {
+      if (!active) return;
+      setConnected(true);
+      setConnectionState("connected");
+      rerender();
+    });
+    room.on(RoomEvent.Reconnecting, () => {
+      if (!active) return;
+      setConnectionState("reconnecting");
+      rerender();
+    });
+    room.on(RoomEvent.Reconnected, () => {
+      if (!active) return;
+      setConnected(true);
+      setConnectionState("connected");
+      // After a network/browser reconnect, force subscribed publications to
+      // be rendered again. This also covers a page restored from bfcache.
+      for (const participant of [room.localParticipant, ...room.remoteParticipants.values()]) {
+        for (const publication of participant.videoTrackPublications.values()) {
+          if (!participant.isLocal && !publication.isSubscribed) {
+            void publication.setSubscribed(true);
+          }
+        }
+      }
+      rerender();
+    });
+    room.on(RoomEvent.Disconnected, () => {
+      if (!active) return;
+      setConnected(false);
+      setConnectionState("disconnected");
+      rerender();
+    });
+
+    // LiveKit normally auto-subscribes, but explicitly subscribing to any
+    // already-published remote media makes refresh/reconnect deterministic.
+    const subscribeExistingRemoteTracks = () => {
+      for (const participant of room.remoteParticipants.values()) {
+        for (const publication of participant.videoTrackPublications.values()) {
+          if (!publication.isSubscribed) void publication.setSubscribed(true);
+        }
+        for (const publication of participant.audioTrackPublications.values()) {
+          if (!publication.isSubscribed) void publication.setSubscribed(true);
+        }
+      }
+      rerender();
+    };
 
     room.connect(wsUrl, token)
       .then(async () => {
         if (!active) return;
         setConnected(true);
+        setConnectionState("connected");
+        subscribeExistingRemoteTracks();
         // Bug fix: publishing the local mic/camera is best-effort, not a
         // precondition for joining. This used to be two bare `await`s
         // inside this .then(), so ANY media failure — permission denied,
@@ -264,9 +325,9 @@ export default function MeetingRoom({ token, wsUrl, meeting, onLeave, isAdmin }:
         </div>
       </header>
 
-      <main className="flex min-h-0 flex-1 gap-3 p-3 sm:p-5">
-        <div className={`mx-auto grid h-fit max-w-7xl flex-1 gap-3 ${participants.length === 1 ? "lg:grid-cols-1" : "sm:grid-cols-2 lg:grid-cols-3"}`}>
-          {participants.map((participant) => <div key={participant.identity} className="relative">
+      <main className={`flex min-h-0 flex-1 gap-3 ${participants.length === 1 && isAdmin ? "p-0" : "p-3 sm:p-5"}`}>
+        <div className={`mx-auto grid min-h-0 min-w-0 max-w-7xl flex-1 gap-3 ${participants.length === 1 && isAdmin ? "h-full grid-cols-1" : participants.length === 1 ? "h-fit grid-cols-1" : "h-fit sm:grid-cols-2 lg:grid-cols-3"}`}>
+          {participants.map((participant) => <div key={participant.identity} className={`relative min-h-0 ${participants.length === 1 && isAdmin ? "h-full" : ""}`}>
             <ParticipantTile participant={participant} refresh={refresh} />
             {isAdmin && !participant.isLocal && (
               <button
@@ -278,7 +339,7 @@ export default function MeetingRoom({ token, wsUrl, meeting, onLeave, isAdmin }:
               </button>
             )}
           </div>)}
-          {!connected && <p className="col-span-full py-10 text-center text-sm text-white/60">Connecting to the live class…</p>}
+          {!connected && <p className="col-span-full py-10 text-center text-sm text-white/60">{connectionState === "reconnecting" ? "Reconnecting to the live class…" : "Connecting to the live class…"}</p>}
         </div>
 
         {chatOpen && (

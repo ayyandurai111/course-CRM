@@ -18,6 +18,7 @@ import {
   UpcomingLessonsSkeleton,
 } from "../components/common/Skeleton";
 import { StudentDashboardSkeletonShell } from "../components/common/PageSkeletons";
+import { formatIndiaDateTime } from "../lib/dateTime";
 
 export default function StudentDashboard() {
   const { user } = useAuth();
@@ -164,7 +165,7 @@ export default function StudentDashboard() {
                     <span className={`rounded-full px-2.5 py-1 text-xs font-semibold ${meeting.status === "LIVE" ? "bg-red-500/10 text-red-700" : "bg-ink-100 text-ink-600"}`}>{meeting.status}</span>
                   </div>
                   <p className="mt-3 text-sm text-ink-500">{meeting.description || "Live course meeting"}</p>
-                  <p className="mt-3 text-xs font-medium text-ink-600">{new Date(meeting.scheduledAt).toLocaleString()}</p>
+                  <p className="mt-3 text-xs font-medium text-ink-600">{formatIndiaDateTime(meeting.scheduledAt)}</p>
                   {meeting.status === "LIVE" ? (
                     <button onClick={() => navigate(`/meeting/${meeting.id}`)} className="mt-4 w-full rounded-full bg-ink-950 px-4 py-2 text-sm font-semibold text-white">Join meeting</button>
                   ) : (
@@ -216,7 +217,7 @@ export default function StudentDashboard() {
                     <h3 className="mt-2 font-display font-semibold text-ink-950">{course.title}</h3>
                     <p className="mt-1 line-clamp-2 text-sm text-ink-500">{course.description}</p>
                     <p className="mt-3 text-xs font-medium text-amber-700">
-                      Starts {course.startAt ? new Date(course.startAt).toLocaleString(undefined, { dateStyle: "medium", timeStyle: "short" }) : "soon"}
+                      Starts {course.startAt ? formatIndiaDateTime(course.startAt) : "soon"}
                     </p>
                   </div>
                 </article>
