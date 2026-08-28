@@ -954,11 +954,22 @@ create table if not exists public.meetings (
   scheduled_at timestamptz not null,
   started_at timestamptz,
   ended_at timestamptz,
+  recording_status text not null default 'NONE'
+    check (recording_status in ('NONE','RECORDING','PROCESSING','READY','FAILED')),
+  recording_egress_id text,
+  recording_content_id uuid,
+  recording_file_key text,
+  recording_duration_seconds integer,
+  recording_file_size_bytes bigint,
+  recording_error text,
   created_by_id uuid not null references public.users(id),
   created_at timestamptz not null default now(),
   updated_at timestamptz not null default now()
 );
 create index if not exists meetings_course_scheduled_idx on public.meetings(course_id, scheduled_at);
 create index if not exists meetings_status_scheduled_idx on public.meetings(status, scheduled_at);
+create unique index if not exists meetings_recording_egress_id_idx
+  on public.meetings(recording_egress_id) where recording_egress_id is not null;
+create index if not exists meetings_recording_status_idx on public.meetings(recording_status);
 alter table public.meetings enable row level security;
 revoke all on public.meetings from anon, authenticated;

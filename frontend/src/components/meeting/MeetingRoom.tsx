@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useRef, useState } from "react";
-import { Room, RoomEvent } from "livekit-client";
+import { RemoteTrackPublication, Room, RoomEvent } from "livekit-client";
 import ParticipantTile from "./ParticipantTile";
 import { apiRequest, ApiError } from "../../lib/apiClient";
 import { MicIcon, MicOffIcon, VideoIcon, VideoOffIcon, MonitorIcon, MessageCircleIcon, LogOutIcon, UserXIcon, UsersIcon, XIcon } from "../common/Icons";
@@ -93,7 +93,7 @@ export default function MeetingRoom({ token, wsUrl, meeting, onLeave, isAdmin }:
       // be rendered again. This also covers a page restored from bfcache.
       for (const participant of [room.localParticipant, ...room.remoteParticipants.values()]) {
         for (const publication of participant.videoTrackPublications.values()) {
-          if (!participant.isLocal && !publication.isSubscribed) {
+          if (!participant.isLocal && publication instanceof RemoteTrackPublication && !publication.isSubscribed) {
             void publication.setSubscribed(true);
           }
         }

@@ -192,6 +192,21 @@ function snakeCasePatch(obj) {
   return out;
 }
 
+/**
+ * Atomically moves a recording from RECORDING to PROCESSING. The
+ * conditional status check is important because LiveKit's egress_ended
+ * webhook may complete the recording concurrently and move it to READY
+ * before this request reaches the database.
+ */
+async function markRecordingProcessingIfActive(meetingId, db = supabase) {
+  const { error } = await db
+    .from("meetings")
+    .update({ recording_status: "PROCESSING", updated_at: new Date().toISOString() })
+    .eq("id", meetingId)
+    .eq("recording_status", "RECORDING");
+  assertNoError(error, "Failed to update recording status");
+}
+
 // Race condition fix: two admins clicking "Start" at nearly the same
 // instant used to both pass a plain SELECT ... WHERE status='SCHEDULED'
 // read (no lock), both create the same LiveKit room (idempotent
@@ -226,7 +241,6 @@ router.post("/:id/end", authenticate, requireAdmin, async (req, res, next) => {
     const { data: current, error: loadError } = await supabase.from("meetings").select("*").eq("id", req.params.id).in("status", ["SCHEDULED", "LIVE"]).maybeSingle();
     assertNoError(loadError, "Failed to load meeting");
     if (!current) return res.status(409).json({ error: "Meeting is already ended or cancelled." });
-    let recordingPatch = {};
     if (current.status === "LIVE") {
       // Stop the recording first, while the room (and LiveKit's own
       // record of the egress) still exists. Best-effort: LiveKit also
@@ -237,7 +251,15 @@ router.post("/:id/end", authenticate, requireAdmin, async (req, res, next) => {
       if (current.recording_status === "RECORDING") {
         try {
           const patch = await stopRecording({ meeting: row(current), egressClient: liveKitApi().egress });
-          if (patch) recordingPatch = { recording_status: patch.recordingStatus };
+          if (patch?.recordingStatus === "PROCESSING") {
+            // Mark PROCESSING only while the row is still RECORDING. This
+            // conditional transition is deliberately separate from the
+            // final ENDED update below: the LiveKit egress_ended webhook
+            // can race this request and move the recording directly to
+            // READY. A later unconditional PROCESSING write would regress
+            // READY back to PROCESSING and leave the admin UI stuck.
+            await markRecordingProcessingIfActive(req.params.id, supabase);
+          }
         } catch (err) {
           console.warn("[meeting] failed to stop recording", err?.message || err);
         }
@@ -246,7 +268,17 @@ router.post("/:id/end", authenticate, requireAdmin, async (req, res, next) => {
         console.warn("[meeting] LiveKit room cleanup failed", err?.message || err);
       }
     }
-    const { data, error } = await supabase.from("meetings").update({ ...recordingPatch, status: "ENDED", ended_at: new Date().toISOString(), updated_at: new Date().toISOString() }).eq("id", req.params.id).in("status", ["SCHEDULED", "LIVE"]).select("*").maybeSingle();
+    // Do not include recording_status in this final transition. The
+    // egress_ended webhook is allowed to move PROCESSING -> READY/FAILED
+    // concurrently, and the meeting must never overwrite that newer
+    // recording state while changing its own status to ENDED.
+    const { data, error } = await supabase
+      .from("meetings")
+      .update({ status: "ENDED", ended_at: new Date().toISOString(), updated_at: new Date().toISOString() })
+      .eq("id", req.params.id)
+      .in("status", ["SCHEDULED", "LIVE"])
+      .select("*")
+      .maybeSingle();
     assertNoError(error, "Failed to end meeting");
     if (!data) return res.status(409).json({ error: "Meeting is already ended or cancelled." });
     await logAction({ actorId: req.user.id, action: "meeting.end", entityType: "Meeting", entityId: req.params.id });
@@ -335,3 +367,4 @@ router.get("/:id/token", authenticate, async (req, res, next) => {
 module.exports = router;
 module.exports.startMeetingCore = startMeetingCore;
 module.exports.publishRecordingCore = publishRecordingCore;
+module.exports.markRecordingProcessingIfActive = markRecordingProcessingIfActive;
