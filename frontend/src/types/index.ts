@@ -4,6 +4,32 @@ export type ContentStatus = "DRAFT" | "SCHEDULED" | "PUBLISHED" | "UNPUBLISHED" 
 export type BillingPeriod = "ONE_TIME" | "MONTHLY" | "YEARLY";
 export type SubscriptionStatus = "ACTIVE" | "EXPIRED" | "CANCELLED" | "PENDING";
 
+export type MeetingStatus = "SCHEDULED" | "LIVE" | "ENDED" | "CANCELLED";
+
+export type MeetingRecordingStatus = "NONE" | "RECORDING" | "PROCESSING" | "READY" | "FAILED";
+
+export interface Meeting {
+  id: string;
+  courseId: string;
+  title: string;
+  description: string;
+  roomName: string;
+  status: MeetingStatus;
+  scheduledAt: string;
+  startedAt?: string | null;
+  endedAt?: string | null;
+  createdAt: string;
+  course?: { id: string; title: string } | null;
+  // Recording lifecycle: Live Meeting -> ends -> LiveKit Egress records
+  // -> saved to Storage -> admin Preview/Publish here -> shows up as a
+  // normal VIDEO in Course Content. See meetingRecordingService.js.
+  recordingStatus: MeetingRecordingStatus;
+  recordingContentId?: string | null;
+  recordingDurationSeconds?: number | null;
+  recordingFileSizeBytes?: number | null;
+  recordingError?: string | null;
+}
+
 export interface User {
   id: string;
   name: string;

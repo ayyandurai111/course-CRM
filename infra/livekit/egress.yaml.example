@@ -1,0 +1,14 @@
+# Example config for the `livekit/egress` service. Mount this at
+# /etc/egress.yaml (see docker-compose.prod.example.yml below).
+#
+# Egress connects back to your LiveKit server exactly like any other
+# participant/service would, using the same api_key/secret pair.
+
+api_key: your_livekit_api_key
+api_secret: your_livekit_api_secret
+ws_url: wss://livekit.yourdomain.com
+
+# Egress renders each room composite in a headless Chrome and needs
+# somewhere on local disk to buffer the encode before/while it streams
+# the upload to S3. This does not need to be large or persistent.
+log_level: info

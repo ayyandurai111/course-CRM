@@ -25,10 +25,56 @@ function slugify(title) {
     .replace(/(^-|-$)/g, "");
 }
 
-async function isSlugTaken(slug) {
-  const { data, error } = await supabase.from("courses").select("id").eq("slug", slug).limit(1).maybeSingle();
-  assertNoError(error, "Failed to check slug");
-  return !!data;
+/**
+ * Race condition fix: this used to be a plain "SELECT to check if the
+ * slug is taken, then INSERT" — a classic TOCTOU gap. Two admins
+ * creating a course with the same title at nearly the same instant
+ * could both run the SELECT before either INSERT landed, both see the
+ * slug as free, and both attempt to insert the identical slug. The
+ * `slug` column's `unique` constraint stops the actual duplicate row
+ * from being created, but the LOSING request's insert then failed with
+ * a raw, uncaught Postgres unique_violation (23505), surfaced to the
+ * admin as an opaque 500 instead of just... getting a working course
+ * created, which is what should happen (the whole point of the "-1,
+ * -2, ..." suffix loop is to make slug collisions a non-event).
+ *
+ * Fixed by making the INSERT itself the authority: attempt the base
+ * slug, and on a slug-unique-violation, retry with the next numeric
+ * suffix — no separate, non-atomic pre-check. This closes the race
+ * instead of just narrowing its window, since the database's own
+ * constraint is what decides "is this slug taken", checked at the
+ * exact moment of the write.
+ */
+const MAX_SLUG_INSERT_ATTEMPTS = 10;
+
+async function insertCourseWithUniqueSlug({ title, ...rest }) {
+  const baseSlug = slugify(title);
+  let lastError;
+  for (let attempt = 0; attempt < MAX_SLUG_INSERT_ATTEMPTS; attempt++) {
+    const slug = attempt === 0 ? baseSlug : `${baseSlug}-${attempt}`;
+    const { data, error } = await supabase
+      .from("courses")
+      .insert(toSnake({ title, ...rest, slug }))
+      .select("*")
+      .single();
+    if (!error) return data;
+    // 23505 = unique_violation. `slug` is the only unique column on
+    // this table besides the id primary key (which we never set
+    // ourselves — it's the DB default), so any unique_violation here is
+    // a slug collision; retry with the next suffix rather than assuming
+    // and swallowing something unrelated.
+    if (error.code === "23505") {
+      lastError = error;
+      continue;
+    }
+    const err = new Error(`Failed to create course: ${error.message}`);
+    err.cause = error;
+    throw err;
+  }
+  const err = new Error("Could not generate a unique URL slug for this course title. Try a slightly different title.");
+  err.status = 409;
+  err.cause = lastError;
+  throw err;
 }
 
 // Public: only published courses, with content-type counts for the
@@ -206,21 +252,14 @@ router.post("/", authenticate, requireAdmin, async (req, res, next) => {
     if (!parsed.success) return res.status(400).json({ error: parsed.error.errors[0].message });
 
     const { title, description, category, thumbnailUrl, startAt, isPublished } = parsed.data;
-    let slug = slugify(title);
-    let n = 1;
-    while (await isSlugTaken(slug)) slug = `${slugify(title)}-${n++}`;
-
-    const data = {
+    const created = await insertCourseWithUniqueSlug({
       title,
       description,
       category: category || null,
       thumbnailUrl: thumbnailUrl || null,
       startAt: startAt || null,
       isPublished: !!isPublished,
-      slug,
-    };
-    const { data: created, error } = await supabase.from("courses").insert(toSnake(data)).select("*").single();
-    assertNoError(error, "Failed to create course");
+    });
 
     await logAction({ actorId: req.user.id, action: "course.create", entityType: "Course", entityId: created.id });
     res.status(201).json({ course: row(created) });
@@ -319,3 +358,5 @@ router.delete("/:id", authenticate, requireAdmin, async (req, res, next) => {
 });
 
 module.exports = router;
+module.exports.insertCourseWithUniqueSlug = insertCourseWithUniqueSlug;
+module.exports.slugify = slugify;

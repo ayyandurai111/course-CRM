@@ -1,5 +1,12 @@
 import { StatCardsSkeleton, UpcomingCoursesSkeleton, ListRowsSkeleton, Skeleton } from "./Skeleton";
 
+/** Dark-surface pulse block for skeletons that sit on the meeting room's
+ *  ink-950 background, where the light-mode gray-300 Skeleton would look
+ *  out of place. Kept local to this file since it's the only dark shell. */
+function DarkSkeleton({ className = "" }: { className?: string }) {
+  return <div className={`animate-pulse rounded-md bg-white/10 ${className}`} aria-hidden="true" />;
+}
+
 // Full-page skeletons that mirror the real header + first section of each
 // dashboard. Used in two places that must look identical: (1) App.tsx,
 // while the auth session is still being checked on a hard reload, and
@@ -28,6 +35,53 @@ export function StudentDashboardSkeletonShell() {
           <UpcomingCoursesSkeleton />
         </section>
       </main>
+    </div>
+  );
+}
+
+/**
+ * Full-page skeleton for the live meeting room, shown by MeetingPage while
+ * the join token is being fetched. Mirrors MeetingRoom.tsx's actual layout
+ * (dark header, participant tile grid, bottom control bar) so joining a
+ * class reads as "connecting" rather than a generic blank/spinner screen,
+ * and so there's no reflow once the real room mounts.
+ */
+export function MeetingRoomSkeletonShell({ participantCount = 3 }: { participantCount?: number }) {
+  return (
+    <div className="flex min-h-screen flex-col bg-ink-950 text-white" aria-busy="true">
+      <header className="flex items-center justify-between border-b border-white/10 px-4 py-3 sm:px-6">
+        <div className="min-w-0">
+          <DarkSkeleton className="h-4 w-40" />
+          <DarkSkeleton className="mt-2 h-3 w-24" />
+        </div>
+        <div className="flex items-center gap-2">
+          <DarkSkeleton className="h-7 w-16 rounded-full" />
+          <DarkSkeleton className="h-8 w-20 rounded-full" />
+          <DarkSkeleton className="hidden h-8 w-14 rounded-full sm:block" />
+        </div>
+      </header>
+
+      <main className="flex min-h-0 flex-1 gap-3 p-3 sm:p-5">
+        <div className="mx-auto grid h-fit w-full max-w-7xl flex-1 gap-3 sm:grid-cols-2 lg:grid-cols-3">
+          {Array.from({ length: participantCount }).map((_, i) => (
+            <div key={i} className="relative aspect-video overflow-hidden rounded-2xl bg-white/5">
+              <DarkSkeleton className="absolute inset-0 rounded-2xl" />
+              <div className="absolute bottom-3 left-3 flex items-center gap-2 rounded-full bg-black/40 px-2.5 py-1">
+                <DarkSkeleton className="h-2.5 w-2.5 rounded-full" />
+                <DarkSkeleton className="h-2.5 w-16" />
+              </div>
+            </div>
+          ))}
+        </div>
+      </main>
+
+      <footer className="sticky bottom-0 border-t border-white/10 bg-ink-950/95 px-3 py-4 backdrop-blur sm:px-6">
+        <div className="mx-auto flex max-w-3xl flex-wrap items-center justify-center gap-2 sm:gap-3">
+          {Array.from({ length: 4 }).map((_, i) => (
+            <DarkSkeleton key={i} className="h-11 w-24 rounded-full sm:w-28" />
+          ))}
+        </div>
+      </footer>
     </div>
   );
 }

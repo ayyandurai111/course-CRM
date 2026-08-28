@@ -320,3 +320,25 @@ supabase db push
 ```
 
 The build/test commands must be run in CI or the deployment environment with network access to install all locked dependencies. A complete build could not be executed in the isolated validation environment when dependencies were unavailable.
+
+## Live meetings (self-hosted)
+
+This build adds a Zoom-like live meeting foundation using the open-source LiveKit WebRTC engine. It does **not** use Zoom, Agora, Twilio, Daily, or LiveKit Cloud. The media server is intended to run on infrastructure controlled by the project owner.
+
+### Local development
+
+1. Start a local LiveKit server:
+   `docker compose -f infra/livekit/docker-compose.dev.yml up -d`
+2. Add these values to `backend/.env`:
+   `LIVEKIT_WS_URL=ws://localhost:7880`, `LIVEKIT_API_KEY=devkey`, `LIVEKIT_API_SECRET=secret`.
+3. Add `VITE_LIVEKIT_WS_URL=ws://localhost:7880` only if the frontend needs the public URL for other UI code; the meeting join response itself supplies the server URL.
+4. Run the existing backend/frontend install scripts. The new dependencies are `livekit-server-sdk` in the backend and `livekit-client` in the frontend.
+5. Apply `supabase/migrations/20260827_add_live_meetings.sql`.
+
+### Current meeting flow
+
+Admin schedules a meeting under **Admin → Meetings**, starts it, and joins the room. Students with access to the course see the meeting in **Upcoming Meetings** and can join while it is LIVE. The Express backend issues short-lived LiveKit tokens after checking the existing Supabase user and course entitlement.
+
+### Production
+
+Use a self-hosted LiveKit deployment with a real DNS name, trusted TLS/WSS, and TURN/firewall configuration. Do not expose `LIVEKIT_API_SECRET` to the frontend. See `infra/livekit/README.md` for the deployment boundary.

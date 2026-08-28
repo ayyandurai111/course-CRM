@@ -6,12 +6,14 @@ import {
   UsersIcon,
   CreditCardIcon,
   GlobeIcon,
+  VideoIcon,
 } from "../common/Icons";
 
 const SECTIONS: { key: string; label: string; icon: ComponentType<{ className?: string }> }[] = [
   { key: "overview", label: "Overview", icon: LayoutDashboardIcon },
   { key: "courses", label: "Courses", icon: BookOpenIcon },
   { key: "content", label: "Content", icon: LayersIcon },
+  { key: "meetings", label: "Meetings", icon: VideoIcon },
   { key: "students", label: "Students", icon: UsersIcon },
   { key: "plans", label: "Plans", icon: CreditCardIcon },
   { key: "site", label: "Site content", icon: GlobeIcon },

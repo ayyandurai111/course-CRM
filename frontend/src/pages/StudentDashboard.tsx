@@ -1,7 +1,8 @@
 import { useEffect, useState, useCallback, useRef } from "react";
+import { useNavigate } from "react-router-dom";
 import { apiRequest, ApiError } from "../lib/apiClient";
 import { useAuth } from "../context/AuthContext";
-import type { ContentItem, ContentType, Course, Subscription } from "../types";
+import type { ContentItem, ContentType, Course, Subscription, Meeting } from "../types";
 import DashboardHeader from "../components/student/DashboardHeader";
 import StatCards from "../components/student/StatCards";
 import ContentTabs from "../components/student/ContentTabs";
@@ -20,10 +21,12 @@ import { StudentDashboardSkeletonShell } from "../components/common/PageSkeleton
 
 export default function StudentDashboard() {
   const { user } = useAuth();
+  const navigate = useNavigate();
   const [tab, setTab] = useState<ContentType | "ALL">("ALL");
   const [items, setItems] = useState<ContentItem[] | null>(null);
   const [upcoming, setUpcoming] = useState<ContentItem[] | null>(null);
   const [upcomingCourses, setUpcomingCourses] = useState<Course[] | null>(null);
+  const [meetings, setMeetings] = useState<Meeting[] | null>(null);
   const [subscription, setSubscription] = useState<Subscription | null>(null);
   const [progress, setProgress] = useState({ overallPercent: 0, total: 0 });
   const [error, setError] = useState<string | null>(null);
@@ -50,6 +53,7 @@ export default function StudentDashboard() {
     if (!opts.silent) {
       setUpcoming(null);
       setUpcomingCourses(null);
+      setMeetings(null);
     }
     setUpcomingCoursesError(null);
     try {
@@ -57,11 +61,12 @@ export default function StudentDashboard() {
         apiRequest<{ content: ContentItem[] }>(`/content${tab !== "ALL" ? `?type=${tab}` : ""}`),
         apiRequest<{ content: ContentItem[] }>("/content/upcoming"),
         apiRequest<{ courses: Course[] }>("/courses/upcoming"),
+        apiRequest<{ meetings: Meeting[] }>("/meetings/upcoming"),
         apiRequest<{ subscription: Subscription | null }>("/me/plan"),
         apiRequest<{ overallPercent: number; total: number }>("/me/progress"),
       ]);
 
-      const [contentRes, upcomingRes, upcomingCoursesRes, planRes, progressRes] = results;
+      const [contentRes, upcomingRes, upcomingCoursesRes, meetingsRes, planRes, progressRes] = results;
       if (contentRes.status === "rejected") throw contentRes.reason;
       if (planRes.status === "rejected") throw planRes.reason;
       if (progressRes.status === "rejected") throw progressRes.reason;
@@ -83,6 +88,8 @@ export default function StudentDashboard() {
             : "Upcoming courses are temporarily unavailable."
         );
       }
+      if (meetingsRes.status === "fulfilled") setMeetings(meetingsRes.value.meetings);
+      else setMeetings([]);
     } catch (err) {
       setError(err instanceof ApiError ? err.message : "Couldn't load your dashboard right now.");
     } finally {
@@ -136,6 +143,37 @@ export default function StudentDashboard() {
           <div className="mt-6 rounded-xl2 border border-amber-400/40 bg-amber-400/10 px-5 py-4 text-sm text-amber-700">
             You don't have an active plan yet, so content is locked. Contact your admin or check the plans on the landing page.
           </div>
+        )}
+
+        {meetings && meetings.length > 0 && (
+          <section className="mt-8">
+            <div className="mb-3 flex items-end justify-between gap-3">
+              <div>
+                <p className="font-mono text-[10px] font-medium uppercase tracking-widest text-amber-600">Live classes</p>
+                <h2 className="mt-1 font-display text-lg font-semibold text-ink-950">Upcoming Meetings</h2>
+              </div>
+            </div>
+            <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-3">
+              {meetings.map((meeting) => (
+                <article key={meeting.id} className="rounded-xl2 border border-ink-900/8 bg-white p-5 shadow-card">
+                  <div className="flex items-start justify-between gap-3">
+                    <div>
+                      <p className="text-xs font-medium text-amber-600">{meeting.course?.title}</p>
+                      <h3 className="mt-1 font-display font-semibold text-ink-950">{meeting.title}</h3>
+                    </div>
+                    <span className={`rounded-full px-2.5 py-1 text-xs font-semibold ${meeting.status === "LIVE" ? "bg-red-500/10 text-red-700" : "bg-ink-100 text-ink-600"}`}>{meeting.status}</span>
+                  </div>
+                  <p className="mt-3 text-sm text-ink-500">{meeting.description || "Live course meeting"}</p>
+                  <p className="mt-3 text-xs font-medium text-ink-600">{new Date(meeting.scheduledAt).toLocaleString()}</p>
+                  {meeting.status === "LIVE" ? (
+                    <button onClick={() => navigate(`/meeting/${meeting.id}`)} className="mt-4 w-full rounded-full bg-ink-950 px-4 py-2 text-sm font-semibold text-white">Join meeting</button>
+                  ) : (
+                    <button disabled className="mt-4 w-full rounded-full bg-ink-100 px-4 py-2 text-sm font-semibold text-ink-400">Waiting for teacher</button>
+                  )}
+                </article>
+              ))}
+            </div>
+          </section>
         )}
 
         {upcomingCourses === null && !error && (

@@ -937,3 +937,28 @@ alter table public.upload_quota_usage enable row level security;
 -- objects in it. Uploads use supabase.storage.from('course-files').upload(),
 -- and reads use short-lived createSignedUrl(), exactly mirroring the old
 -- Firebase Storage upload()/getSignedUrl() calls.
+
+-- ---------------------------------------------------------------------
+-- meetings — live class metadata. Audio/video is handled by the project's
+-- self-hosted LiveKit server; this table stores only meeting state and
+-- authorization metadata.
+-- ---------------------------------------------------------------------
+create table if not exists public.meetings (
+  id uuid primary key default gen_random_uuid(),
+  course_id uuid not null references public.courses(id) on delete cascade,
+  title text not null,
+  description text not null default '',
+  room_name text not null unique,
+  status text not null default 'SCHEDULED'
+    check (status in ('SCHEDULED','LIVE','ENDED','CANCELLED')),
+  scheduled_at timestamptz not null,
+  started_at timestamptz,
+  ended_at timestamptz,
+  created_by_id uuid not null references public.users(id),
+  created_at timestamptz not null default now(),
+  updated_at timestamptz not null default now()
+);
+create index if not exists meetings_course_scheduled_idx on public.meetings(course_id, scheduled_at);
+create index if not exists meetings_status_scheduled_idx on public.meetings(status, scheduled_at);
+alter table public.meetings enable row level security;
+revoke all on public.meetings from anon, authenticated;

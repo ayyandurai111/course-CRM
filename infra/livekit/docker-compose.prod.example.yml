@@ -1,0 +1,30 @@
+# Example production compose file with recording enabled. Adapt the
+# dev-only docker-compose.dev.yml (which runs `livekit-server --dev`
+# and has no Egress/webhook/TLS) into something like this for a real
+# deployment — a real domain, TLS termination, and TURN are still your
+# responsibility per the official LiveKit self-hosting docs.
+services:
+  livekit:
+    image: livekit/livekit-server:latest
+    command: --config /etc/livekit.yaml
+    volumes:
+      - ./livekit.yaml:/etc/livekit.yaml:ro
+    ports:
+      - "7880:7880"
+      - "7881:7881"
+      - "50000-60000:50000-60000/udp"
+    restart: unless-stopped
+
+  egress:
+    image: livekit/egress:latest
+    # Egress needs elevated privileges to run its embedded Chrome for
+    # room-composite recording.
+    cap_add:
+      - SYS_ADMIN
+    environment:
+      - EGRESS_CONFIG_FILE=/etc/egress.yaml
+    volumes:
+      - ./egress.yaml:/etc/egress.yaml:ro
+    restart: unless-stopped
+    depends_on:
+      - livekit

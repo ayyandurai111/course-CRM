@@ -33,19 +33,35 @@ const { getCurrentSubscription } = require("./subscriptionService");
  * course.isPublished check duplicated at every call site.
  */
 async function getAccessibleCourseIds(userId) {
-  const { courseIds } = await getPlanLinkedPublishedCourses(userId, { excludeFuture: true });
+  const { courseIds } = await getPlanLinkedPublishedCourses(userId, { dateFilter: "excludeFuture" });
   return courseIds;
 }
 
 /**
  * Shared by getAccessibleCourseIds (content access — excludes future
- * courses) and getUpcomingCourseIds (the Upcoming Courses feed —
- * excludes everything EXCEPT future courses). Both need the same base
- * set: courses linked to the user's active plan that are also
- * currently published — they only differ on which side of "now" the
- * start date has to fall on.
+ * courses), getUpcomingCourseIds (the Upcoming Courses feed — ONLY
+ * future courses), and userCanAccessCourseForLiveMeeting (meetings —
+ * NO date gate at all, i.e. every plan-linked published course
+ * regardless of start_at). All three need the same base set: courses
+ * linked to the user's active plan that are also currently published —
+ * they only differ on whether/how the start date further narrows it.
+ *
+ * `dateFilter`:
+ *   - "excludeFuture": drop courses whose start_at is still in the future
+ *   - "onlyFuture": keep ONLY courses whose start_at is in the future
+ *   - "any": no date filtering at all — every plan-linked published course
+ *
+ * Bug history: this used to take a boolean `excludeFuture` where `false`
+ * meant "only future" (used for the Upcoming Courses feed) rather than
+ * "no filter" — there was no way to express "ignore the date gate
+ * entirely". userCanAccessCourseForLiveMeeting was passing
+ * `excludeFuture: false` intending "no gate", but actually got the
+ * "only future" behavior, so a live meeting for any course that had
+ * ALREADY started (the overwhelmingly common case) was wrongly
+ * inaccessible to enrolled students — see
+ * coursePublicationAccessControl.test.js for regression coverage.
  */
-async function getPlanLinkedPublishedCourses(userId, { excludeFuture }) {
+async function getPlanLinkedPublishedCourses(userId, { dateFilter }) {
   const { subscription, usable } = await getCurrentSubscription(userId);
   const courseIds = new Set();
   if (!usable) return { courseIds };
@@ -86,20 +102,42 @@ async function getPlanLinkedPublishedCourses(userId, { excludeFuture }) {
   const now = Date.now();
   for (const course of rows(coursesData)) {
     const isFuture = !!course.startAt && new Date(course.startAt).getTime() > now;
-    if (excludeFuture ? !isFuture : isFuture) courseIds.add(course.id);
+    if (dateFilter === "excludeFuture" && isFuture) continue;
+    if (dateFilter === "onlyFuture" && !isFuture) continue;
+    courseIds.add(course.id);
   }
 
   return { courseIds };
 }
 
 async function getUpcomingCourseIds(userId) {
-  const { courseIds } = await getPlanLinkedPublishedCourses(userId, { excludeFuture: false });
+  const { courseIds } = await getPlanLinkedPublishedCourses(userId, { dateFilter: "onlyFuture" });
   return courseIds;
 }
 
 async function userCanAccessCourse(userId, courseId) {
   const ids = await getAccessibleCourseIds(userId);
   return ids.has(courseId);
+}
+
+/**
+ * Bug fix — live meetings for a course whose `start_at` is still in the
+ * future were unjoinable by any enrolled student: userCanAccessCourse()
+ * (via getAccessibleCourseIds/excludeFuture) deliberately hides
+ * not-yet-started courses from lesson/content access, but an admin can
+ * legitimately start a LIVE meeting for such a course (e.g. a live
+ * kickoff/orientation class held before the course's own content
+ * unlocks). Meetings must only check "is this course published and
+ * covered by an active plan" — NOT the future-start-date gate that
+ * exists purely to hide pre-release lesson content. Uses
+ * getPlanLinkedPublishedCourses(userId, { dateFilter: "any" }) — every
+ * plan-linked, published course, regardless of start_at — which is the
+ * union of the "excludeFuture" set (content access) and the
+ * "onlyFuture" set (Upcoming Courses feed).
+ */
+async function userCanAccessCourseForLiveMeeting(userId, courseId) {
+  const { courseIds } = await getPlanLinkedPublishedCourses(userId, { dateFilter: "any" });
+  return courseIds.has(courseId);
 }
 
 /**
@@ -122,4 +160,4 @@ async function userCanAccessContent(userId, content) {
   return userCanAccessCourse(userId, content.courseId);
 }
 
-module.exports = { getAccessibleCourseIds, getUpcomingCourseIds, userCanAccessCourse, userCanAccessContent };
+module.exports = { getAccessibleCourseIds, getUpcomingCourseIds, userCanAccessCourse, userCanAccessCourseForLiveMeeting, userCanAccessContent };

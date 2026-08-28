@@ -119,9 +119,38 @@ router.patch("/:id", authenticate, requireAdmin, async (req, res, next) => {
   }
 });
 
+/**
+ * Pure — maps a Postgres delete error to the response this route should
+ * send, so the FK-violation-to-409 translation is directly testable
+ * without a live database. Returns null for "not a special case, let
+ * assertNoError/the global handler deal with it".
+ */
+function mapPlanDeleteError(error) {
+  if (error && error.code === "23503") {
+    return {
+      status: 409,
+      body: {
+        error: "This plan has subscription history and cannot be deleted. Deactivate it instead so it stops accepting new subscriptions.",
+      },
+    };
+  }
+  return null;
+}
+
+// A plan can never be truly deleted once any student has ever been
+// subscribed to it — subscriptions.plan_id has a `references` FK with
+// no ON DELETE clause (i.e. RESTRICT), by design: subscription history
+// must never silently disappear or be reassigned out from under a
+// student's billing/access record. Without catching this, the raw
+// Postgres foreign-key-violation (23503) would surface to the client as
+// an opaque 500. Deactivating (PATCH isActive: false) is the correct
+// way to retire a plan that has ever had a subscriber; only a plan that
+// was created by mistake and never subscribed to can be hard-deleted.
 router.delete("/:id", authenticate, requireAdmin, async (req, res, next) => {
   try {
     const { error } = await supabase.from("plans").delete().eq("id", req.params.id);
+    const mapped = mapPlanDeleteError(error);
+    if (mapped) return res.status(mapped.status).json(mapped.body);
     assertNoError(error, "Failed to delete plan");
     await logAction({ actorId: req.user.id, action: "plan.delete", entityType: "Plan", entityId: req.params.id });
     res.status(204).send();
@@ -131,3 +160,4 @@ router.delete("/:id", authenticate, requireAdmin, async (req, res, next) => {
 });
 
 module.exports = router;
+module.exports.mapPlanDeleteError = mapPlanDeleteError;

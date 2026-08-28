@@ -152,3 +152,62 @@ test("started course remains accessible when start_at is in the past", async () 
   const ids = await access.getAccessibleCourseIds("student-1");
   assert.equal(ids.has("course-started"), true);
 });
+
+// --- userCanAccessCourseForLiveMeeting: no date gate at all (regression
+// for the "excludeFuture: false" bug — that accidentally meant "only
+// future" rather than "no filter", so an already-started course's live
+// meeting was wrongly unjoinable by enrolled students) ---
+
+test("live meeting access: an ALREADY-STARTED course (the common case) is joinable", async () => {
+  const access = loadAccessServiceWithFakes({
+    usable: true,
+    plans: [{ id: "plan-1", is_active: true, course_ids: ["course-started"] }],
+    courses: [{ id: "course-started", is_published: true, start_at: new Date(Date.now() - 60 * 60 * 1000).toISOString() }],
+  });
+  assert.equal(await access.userCanAccessCourseForLiveMeeting("student-1", "course-started"), true);
+});
+
+test("live meeting access: a FUTURE course (e.g. a pre-release live kickoff) is joinable", async () => {
+  const access = loadAccessServiceWithFakes({
+    usable: true,
+    plans: [{ id: "plan-1", is_active: true, course_ids: ["course-future"] }],
+    courses: [{ id: "course-future", is_published: true, start_at: new Date(Date.now() + 60 * 60 * 1000).toISOString() }],
+  });
+  assert.equal(await access.userCanAccessCourseForLiveMeeting("student-1", "course-future"), true);
+});
+
+test("live meeting access: a course with no start_at at all is joinable", async () => {
+  const access = loadAccessServiceWithFakes({
+    usable: true,
+    plans: [{ id: "plan-1", is_active: true, course_ids: ["course-no-date"] }],
+    courses: [{ id: "course-no-date", is_published: true }],
+  });
+  assert.equal(await access.userCanAccessCourseForLiveMeeting("student-1", "course-no-date"), true);
+});
+
+test("live meeting access: an UNPUBLISHED course is still denied regardless of date", async () => {
+  const access = loadAccessServiceWithFakes({
+    usable: true,
+    plans: [{ id: "plan-1", is_active: true, course_ids: ["course-unpub"] }],
+    courses: [{ id: "course-unpub", is_published: false }],
+  });
+  assert.equal(await access.userCanAccessCourseForLiveMeeting("student-1", "course-unpub"), false);
+});
+
+test("live meeting access: a course not linked to the user's active plan is denied", async () => {
+  const access = loadAccessServiceWithFakes({
+    usable: true,
+    plans: [{ id: "plan-1", is_active: true, course_ids: ["course-other"] }],
+    courses: [{ id: "course-other", is_published: true }, { id: "course-z", is_published: true }],
+  });
+  assert.equal(await access.userCanAccessCourseForLiveMeeting("student-1", "course-z"), false);
+});
+
+test("live meeting access: an unsubscribed student is denied even for a started, published, plan-referenced course", async () => {
+  const access = loadAccessServiceWithFakes({
+    usable: false,
+    plans: [{ id: "plan-1", is_active: true, course_ids: ["course-started"] }],
+    courses: [{ id: "course-started", is_published: true, start_at: new Date(Date.now() - 60 * 60 * 1000).toISOString() }],
+  });
+  assert.equal(await access.userCanAccessCourseForLiveMeeting("student-1", "course-started"), false);
+});

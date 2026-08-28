@@ -59,12 +59,12 @@ test("createRateLimitStore never throws regardless of REDIS_URL value", () => {
 
 // --- documentation / wiring sanity checks ---
 
-test("all three express-rate-limit instances are wired through createRateLimitStore (index.js, upload.routes.js)", () => {
+test("all four express-rate-limit instances are wired through createRateLimitStore (index.js x3, upload.routes.js x1)", () => {
   const fs = require("fs");
   const indexSrc = fs.readFileSync(require.resolve("../index.js"), "utf8");
   const uploadSrc = fs.readFileSync(require.resolve("../routes/upload.routes.js"), "utf8");
   assert.match(indexSrc, /require\(".\/lib\/rateLimitStore"\)/);
-  assert.equal((indexSrc.match(/store: createRateLimitStore\(/g) || []).length, 2, "both index.js rate limiters must use the shared store selector");
+  assert.equal((indexSrc.match(/store: createRateLimitStore\(/g) || []).length, 3, "all three index.js rate limiters (general API, auth, LiveKit webhook) must use the shared store selector");
   assert.match(uploadSrc, /store: createRateLimitStore\(/);
 });
 

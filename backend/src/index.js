@@ -24,6 +24,8 @@ const uploadRoutes = require("./routes/upload.routes");
 const fileRoutes = require("./routes/files.routes");
 const adminRoutes = require("./routes/admin.routes");
 const siteContentRoutes = require("./routes/siteContent.routes");
+const meetingRoutes = require("./routes/meetings.routes");
+const livekitWebhookRoutes = require("./routes/livekitWebhook.routes");
 
 const app = express();
 
@@ -71,6 +73,14 @@ try {
   supabaseOrigin = null;
 }
 const supabaseSources = supabaseOrigin ? [supabaseOrigin] : [];
+let liveKitOrigin = null;
+try {
+  const configuredLiveKitUrl = process.env.LIVEKIT_WS_URL || process.env.LIVEKIT_URL || "";
+  liveKitOrigin = configuredLiveKitUrl ? new URL(configuredLiveKitUrl).origin : null;
+} catch {
+  liveKitOrigin = null;
+}
+const liveKitSources = liveKitOrigin ? [liveKitOrigin] : [];
 
 app.use(
   helmet({
@@ -81,7 +91,7 @@ app.use(
         styleSrc: ["'self'", "https://fonts.googleapis.com"],
         fontSrc: ["'self'", "https://fonts.gstatic.com"],
         imgSrc: ["'self'", ...supabaseSources, ...(process.env.ALLOWED_IMAGE_ORIGINS || "").split(",").map((v) => v.trim()).filter(Boolean)],
-        connectSrc: ["'self'", ...supabaseSources],
+        connectSrc: ["'self'", ...supabaseSources, ...liveKitSources],
         // "blob:" is required for the admin's video-thumbnail scrubber
         // (VideoThumbnailPicker), which loads a freshly-picked, not-yet-
         // uploaded video file into a <video> via URL.createObjectURL()
@@ -112,6 +122,20 @@ app.use(
     credentials: true,
   })
 );
+// LiveKit signs its webhook payload over the exact raw request bytes,
+// so this one path needs the unparsed body — it must be registered
+// *before* the global express.json() below, which would otherwise
+// consume and JSON-parse it first.
+app.use("/api/livekit/webhook", express.raw({ type: "*/*", limit: "2mb" }));
+// Dedicated, more generous limiter for the webhook (exempted from the
+// general "/api" one above) — still bounded as defense-in-depth against
+// a flood of requests, just sized for legitimate LiveKit traffic
+// (potentially many meetings ending in the same window) rather than
+// the much lower per-browser-session budget the rest of the API uses.
+app.use(
+  "/api/livekit/webhook",
+  rateLimit({ windowMs: 15 * 60 * 1000, max: 3000, standardHeaders: true, legacyHeaders: false, store: createRateLimitStore("livekit-webhook") })
+);
 app.use(express.json({ limit: "2mb" }));
 app.use((err, req, res, next) => {
   if (err && (err.type === "entity.parse.failed" || err instanceof SyntaxError)) {
@@ -137,9 +161,23 @@ app.use((req, res, next) => {
 // Generic API rate limit; auth routes get a stricter one below. These
 // counters are process-local because this deployment is intentionally
 // single-instance. Horizontal scaling fails closed via REDIS_URL check below.
+//
+// The LiveKit webhook is excluded: it's authenticated by a cryptographic
+// signature (see livekitWebhook.routes.js), not by session/IP trust, so
+// throttling it wouldn't add security — it would only risk delaying
+// legitimate egress_ended deliveries (recordings stuck in PROCESSING
+// until LiveKit's own retry) under a burst of meetings ending close
+// together, which is exactly when you'd want this to be reliable.
 app.use(
   "/api",
-  rateLimit({ windowMs: 15 * 60 * 1000, max: 300, standardHeaders: true, legacyHeaders: false, store: createRateLimitStore("api") })
+  rateLimit({
+    windowMs: 15 * 60 * 1000,
+    max: 300,
+    standardHeaders: true,
+    legacyHeaders: false,
+    store: createRateLimitStore("api"),
+    skip: (req) => req.originalUrl.startsWith("/api/livekit/webhook"),
+  })
 );
 app.use(
   "/api/auth",
@@ -158,6 +196,8 @@ app.use("/api/upload", uploadRoutes);
 app.use("/api/files", fileRoutes);
 app.use("/api/admin", adminRoutes);
 app.use("/api/site-content", siteContentRoutes);
+app.use("/api/meetings", meetingRoutes);
+app.use("/api/livekit/webhook", livekitWebhookRoutes);
 
 // ---------------------------------------------------------------------------
 // Serve the built frontend so the whole app runs behind a single URL/port.
@@ -221,6 +261,23 @@ if (process.env.REDIS_URL) {
 }
 if (process.env.ADMIN_BOOTSTRAP_TOKEN && process.env.NODE_ENV === "production") {
   console.warn("[security] ADMIN_BOOTSTRAP_TOKEN is enabled in production. Remove it immediately after bootstrap.");
+}
+{
+  // Meeting recording is all-or-nothing (see recordingConfig.js) —
+  // warn loudly at boot if it looks half-configured, since a silently
+  // disabled recording feature (every live meeting quietly not
+  // recording) is much harder to notice than a startup log line.
+  const { recordingEnabled } = require("./lib/recordingConfig");
+  const recordingVars = ["SUPABASE_S3_ACCESS_KEY", "SUPABASE_S3_SECRET_KEY", "SUPABASE_S3_REGION", "SUPABASE_S3_ENDPOINT"];
+  const setCount = recordingVars.filter((k) => !!process.env[k]).length;
+  if (setCount > 0 && !recordingEnabled()) {
+    console.warn(
+      `[startup] Meeting recording looks partially configured (${setCount}/${recordingVars.length} of ${recordingVars.join(", ")} set) ` +
+        `but is not enabled — check infra/livekit/README.md. Live meetings will run normally but will not be recorded.`
+    );
+  } else if (recordingEnabled()) {
+    console.log("[startup] Meeting recording is enabled (LiveKit Egress -> Supabase S3-compatible Storage).");
+  }
 }
 
 const PORT = process.env.PORT || 4000;

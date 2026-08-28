@@ -4,7 +4,15 @@ import LandingPage from "./pages/LandingPage";
 import LoginPage from "./pages/LoginPage";
 import StudentDashboard from "./pages/StudentDashboard";
 import AdminPanel from "./pages/AdminPanel";
+import MeetingPage from "./pages/MeetingPage";
 import { StudentDashboardSkeletonShell, AdminPanelSkeletonShell } from "./components/common/PageSkeletons";
+
+function RequireMeeting({ children }: { children: JSX.Element }) {
+  const { user, loading } = useAuth();
+  if (loading && !user) return <div className="min-h-screen bg-ink-950" />;
+  if (!user) return <Navigate to="/login" replace />;
+  return children;
+}
 
 function RequireRole({ role, children }: { role: "STUDENT" | "ADMIN"; children: JSX.Element }) {
   const { user, loading } = useAuth();
@@ -34,6 +42,7 @@ export default function App() {
           </RequireRole>
         }
       />
+      <Route path="/meeting/:id" element={<RequireMeeting><MeetingPage /></RequireMeeting>} />
       <Route
         path="/admin"
         element={

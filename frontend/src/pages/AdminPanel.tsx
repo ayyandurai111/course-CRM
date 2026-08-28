@@ -8,6 +8,7 @@ import ContentSection from "../components/admin/ContentSection";
 import StudentsSection from "../components/admin/StudentsSection";
 import PlansSection from "../components/admin/PlansSection";
 import SiteContentSection from "../components/admin/SiteContentSection";
+import MeetingsSection from "../components/admin/MeetingsSection";
 
 export default function AdminPanel() {
   const { user, logout } = useAuth();
@@ -51,6 +52,7 @@ export default function AdminPanel() {
           {visited.has("courses") && <div hidden={section !== "courses"}><CoursesSection /></div>}
           {visited.has("content") && <div hidden={section !== "content"}><ContentSection /></div>}
           {visited.has("students") && <div hidden={section !== "students"}><StudentsSection /></div>}
+          {visited.has("meetings") && <div hidden={section !== "meetings"}><MeetingsSection /></div>}
           {visited.has("plans") && <div hidden={section !== "plans"}><PlansSection /></div>}
           {visited.has("site") && <div hidden={section !== "site"}><SiteContentSection /></div>}
         </main>
