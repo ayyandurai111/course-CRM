@@ -5,7 +5,6 @@ import type { ContentItem, Course, Meeting } from "../../types";
 import { TableSkeleton } from "../common/Skeleton";
 import { ErrorState, EmptyState } from "../common/States";
 import VideoPlayerModal from "../content/VideoPlayerModal";
-import { formatIndiaDateTime, indiaDateTimeLocalToIso, APP_TIME_ZONE_LABEL } from "../../lib/dateTime";
 
 /**
  * Live Meeting -> Meeting முடியும் -> Recording உருவாகும் -> Recording
@@ -84,7 +83,7 @@ export default function MeetingsSection() {
     e.preventDefault();
     setBusy(true);
     try {
-      await apiRequest("/meetings", { method: "POST", body: { courseId, title, description, scheduledAt: indiaDateTimeLocalToIso(scheduledAt) } });
+      await apiRequest("/meetings", { method: "POST", body: { courseId, title, description, scheduledAt: new Date(scheduledAt).toISOString() } });
       setTitle(""); setDescription(""); setScheduledAt("");
       await load();
     } catch (err) {
@@ -172,7 +171,7 @@ export default function MeetingsSection() {
         <div className="sm:col-span-2"><h2 className="font-semibold text-ink-950">Schedule a live class</h2></div>
         <label className="text-sm text-ink-700">Course<select value={courseId} onChange={(e) => setCourseId(e.target.value)} required className="mt-1 w-full rounded-lg border border-ink-900/15 bg-white px-3 py-2">{courses.map((c) => <option key={c.id} value={c.id}>{c.title}</option>)}</select></label>
         <label className="text-sm text-ink-700">Title<input value={title} onChange={(e) => setTitle(e.target.value)} required maxLength={160} className="mt-1 w-full rounded-lg border border-ink-900/15 px-3 py-2" placeholder="Live class" /></label>
-        <label className="text-sm text-ink-700">Date & time ({APP_TIME_ZONE_LABEL})<input type="datetime-local" value={scheduledAt} onChange={(e) => setScheduledAt(e.target.value)} required className="mt-1 w-full rounded-lg border border-ink-900/15 px-3 py-2" /></label>
+        <label className="text-sm text-ink-700">Date & time<input type="datetime-local" value={scheduledAt} onChange={(e) => setScheduledAt(e.target.value)} required className="mt-1 w-full rounded-lg border border-ink-900/15 px-3 py-2" /></label>
         <label className="text-sm text-ink-700">Description<input value={description} onChange={(e) => setDescription(e.target.value)} maxLength={1000} className="mt-1 w-full rounded-lg border border-ink-900/15 px-3 py-2" placeholder="Optional" /></label>
         <div className="sm:col-span-2"><button disabled={busy || !courseId} className="rounded-full bg-ink-950 px-4 py-2 text-sm font-semibold text-white disabled:opacity-50">{busy ? "Creating…" : "Schedule meeting"}</button></div>
       </form>
@@ -191,7 +190,7 @@ export default function MeetingsSection() {
                   <span className="shrink-0 rounded-full bg-ink-100 px-2.5 py-0.5 text-xs font-medium text-ink-600">{m.status}</span>
                 </div>
                 <p className="mt-1 text-sm text-ink-500">{m.course?.title || "—"}</p>
-                <p className="mt-1 text-xs font-medium text-ink-600">{formatIndiaDateTime(m.scheduledAt)}</p>
+                <p className="mt-1 text-xs font-medium text-ink-600">{new Date(m.scheduledAt).toLocaleString()}</p>
                 {m.recordingStatus !== "NONE" && <p className="mt-1">{recordingBadge(m)}</p>}
                 <div className="mt-3 flex flex-wrap gap-4 border-t border-ink-900/8 pt-3">
                   {m.status === "SCHEDULED" && <button onClick={() => startMeeting(m.id)} disabled={startingId === m.id} className="text-sm font-semibold text-emerald-700 disabled:opacity-50">{startingId === m.id ? "Starting…" : "Start"}</button>}
@@ -216,7 +215,7 @@ export default function MeetingsSection() {
                 {meetings.map((m) => <tr key={m.id}>
                   <td className="px-5 py-3 font-medium text-ink-900">{m.title}</td>
                   <td className="px-5 py-3 text-ink-500">{m.course?.title || "—"}</td>
-                  <td className="px-5 py-3 text-ink-500">{formatIndiaDateTime(m.scheduledAt)}</td>
+                  <td className="px-5 py-3 text-ink-500">{new Date(m.scheduledAt).toLocaleString()}</td>
                   <td className="px-5 py-3"><span className="rounded-full bg-ink-100 px-2.5 py-1 text-xs font-medium text-ink-600">{m.status}</span>{recordingBadge(m)}</td>
                   <td className="px-5 py-3"><div className="flex flex-wrap justify-end gap-3">
                     {m.status === "SCHEDULED" && <button onClick={() => startMeeting(m.id)} disabled={startingId === m.id} className="text-sm font-semibold text-emerald-700 disabled:opacity-50">{startingId === m.id ? "Starting…" : "Start"}</button>}

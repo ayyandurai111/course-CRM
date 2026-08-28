@@ -3,7 +3,14 @@ import Modal from "../modals/Modal";
 import { Field, inputClass, PrimaryButton } from "../forms/FormFields";
 import { apiRequest, ApiError } from "../../lib/apiClient";
 import type { Course } from "../../types";
-import { indiaDateTimeLocalToIso, toIndiaDateTimeLocal, APP_TIME_ZONE_LABEL } from "../../lib/dateTime";
+
+function toDateTimeLocal(iso: string | null | undefined): string {
+  if (!iso) return "";
+  const date = new Date(iso);
+  if (Number.isNaN(date.getTime())) return "";
+  const pad = (value: number) => String(value).padStart(2, "0");
+  return `${date.getFullYear()}-${pad(date.getMonth() + 1)}-${pad(date.getDate())}T${pad(date.getHours())}:${pad(date.getMinutes())}`;
+}
 
 const ACCEPTED_THUMBNAIL_TYPES = ["image/jpeg", "image/png", "image/webp"];
 const MAX_THUMBNAIL_MB = 10;
@@ -26,7 +33,7 @@ export default function CourseFormModal({
   // existing thumbnail when editing and nothing new has been picked yet.
   const [thumbnailFile, setThumbnailFile] = useState<File | null>(null);
   const [thumbnailPreviewUrl, setThumbnailPreviewUrl] = useState(course?.thumbnailUrl ?? "");
-  const [startAt, setStartAt] = useState(() => toIndiaDateTimeLocal(course?.startAt));
+  const [startAt, setStartAt] = useState(() => toDateTimeLocal(course?.startAt));
   const [isPublished, setIsPublished] = useState(course?.isPublished ?? false);
   const [error, setError] = useState<string | null>(null);
   const [saving, setSaving] = useState(false);
@@ -34,7 +41,7 @@ export default function CourseFormModal({
   const fileInputRef = useRef<HTMLInputElement>(null);
 
   useEffect(() => {
-    setStartAt(toIndiaDateTimeLocal(course?.startAt));
+    setStartAt(toDateTimeLocal(course?.startAt));
   }, [course?.id, course?.startAt]);
 
   // Revoke the local object URL when it's replaced or the modal unmounts,
@@ -76,8 +83,8 @@ export default function CourseFormModal({
     setError(null);
     setSaving(true);
     try {
-      const startDateIso = startAt ? indiaDateTimeLocalToIso(startAt) : null;
-      if (startAt && !startDateIso) {
+      const startDate = startAt ? new Date(startAt) : null;
+      if (startDate && Number.isNaN(startDate.getTime())) {
         setError("Please enter a valid course start date and time.");
         return;
       }
@@ -102,7 +109,7 @@ export default function CourseFormModal({
         thumbnailUrl = undefined;
       }
 
-      const body = { title: title.trim(), description: description.trim(), category: category.trim() || undefined, thumbnailUrl, startAt: startDateIso, isPublished };
+      const body = { title: title.trim(), description: description.trim(), category: category.trim() || undefined, thumbnailUrl, startAt: startDate ? startDate.toISOString() : null, isPublished };
       if (course) {
         await apiRequest(`/courses/${course.id}`, { method: "PATCH", body });
       } else {
@@ -166,7 +173,7 @@ export default function CourseFormModal({
             </div>
           </div>
         </Field>
-        <Field label={`Course start date & time (${APP_TIME_ZONE_LABEL})`} htmlFor="c-start" hint="Optional. Set this to show the course in students' Upcoming Courses. India Standard Time is used.">
+        <Field label="Course start date & time" htmlFor="c-start" hint="Optional. Set this to show the course in students' Upcoming Courses. The time is saved with timezone information.">
           <input
             id="c-start"
             type="datetime-local"

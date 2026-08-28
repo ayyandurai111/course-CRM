@@ -3,7 +3,6 @@ import Modal from "../modals/Modal";
 import { Field, inputClass, PrimaryButton } from "../forms/FormFields";
 import { apiRequest, ApiError } from "../../lib/apiClient";
 import type { ContentItem } from "../../types";
-import { indiaDateTimeLocalToIso, nowIndiaDateTimeLocal, toIndiaDateTimeLocal, APP_TIME_ZONE_LABEL } from "../../lib/dateTime";
 
 export default function ScheduleModal({
   content,
@@ -14,9 +13,13 @@ export default function ScheduleModal({
   onClose: () => void;
   onSaved: () => void;
 }) {
-  // The picker is always shown in India Standard Time (IST), regardless of the
-  // browser/server timezone. The API still receives an explicit UTC instant.
-
+  function toLocalDateTimeInput(iso?: string | null) {
+    if (!iso) return "";
+    const date = new Date(iso);
+    if (Number.isNaN(date.getTime())) return "";
+    const pad = (n: number) => String(n).padStart(2, "0");
+    return `${date.getFullYear()}-${pad(date.getMonth() + 1)}-${pad(date.getDate())}T${pad(date.getHours())}:${pad(date.getMinutes())}`;
+  }
 
   // The backend rejects any scheduledAt that isn't strictly in the
   // future (see backend/src/lib/dateValidation.js). Without this, the
@@ -26,9 +29,9 @@ export default function ScheduleModal({
   // mismatch between what the UI allows and what the API accepts can't
   // happen. Recomputed fresh each render so it stays accurate if the
   // modal is left open across a minute boundary.
-  const minDateTime = nowIndiaDateTimeLocal();
+  const minDateTime = toLocalDateTimeInput(new Date().toISOString());
 
-  const [value, setValue] = useState(() => toIndiaDateTimeLocal(content.scheduledAt));
+  const [value, setValue] = useState(() => toLocalDateTimeInput(content.scheduledAt));
   const [error, setError] = useState<string | null>(null);
   const [saving, setSaving] = useState(false);
 
@@ -43,15 +46,17 @@ export default function ScheduleModal({
         setError("Choose a publish date and time.");
         return;
       }
-      const scheduledAt = indiaDateTimeLocalToIso(value);
-      if (!scheduledAt) {
+      const localDate = new Date(value);
+      if (Number.isNaN(localDate.getTime())) {
         setError("Choose a valid publish date and time.");
         return;
       }
-      if (new Date(scheduledAt).getTime() <= Date.now()) {
+      if (localDate.getTime() <= Date.now()) {
         setError("Choose a date and time in the future.");
         return;
       }
+      // datetime-local is interpreted in the browser's local timezone.
+      const scheduledAt = localDate.toISOString();
       await apiRequest(`/content/${content.id}/${isReschedule ? "reschedule" : "schedule"}`, {
         method: "POST",
         body: { scheduledAt },
@@ -68,9 +73,9 @@ export default function ScheduleModal({
     <Modal title={isReschedule ? "Reschedule content" : "Schedule content"} onClose={onClose}>
       <form onSubmit={handleSubmit}>
         <p className="mb-4 text-sm text-ink-500">
-          "{content.title}" will publish automatically at the time you choose, in India Standard Time (IST).
+          "{content.title}" will publish automatically at the time you choose, in your local timezone.
         </p>
-        <Field label={`Publish date & time (${APP_TIME_ZONE_LABEL})`} htmlFor="sch-time">
+        <Field label="Publish date & time" htmlFor="sch-time">
           <input
             id="sch-time"
             type="datetime-local"

@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useRef, useState } from "react";
-import { RemoteTrackPublication, Room, RoomEvent } from "livekit-client";
+import { Room, RoomEvent } from "livekit-client";
 import ParticipantTile from "./ParticipantTile";
 import { apiRequest, ApiError } from "../../lib/apiClient";
 import { MicIcon, MicOffIcon, VideoIcon, VideoOffIcon, MonitorIcon, MessageCircleIcon, LogOutIcon, UserXIcon, UsersIcon, XIcon } from "../common/Icons";
@@ -34,7 +34,6 @@ export default function MeetingRoom({ token, wsUrl, meeting, onLeave, isAdmin }:
   const [messages, setMessages] = useState<ChatMessage[]>([]);
   const [error, setError] = useState<string | null>(null);
   const [moderationBusy, setModerationBusy] = useState<string | null>(null);
-  const [connectionState, setConnectionState] = useState<string>("connecting");
 
   useEffect(() => {
     let active = true;
@@ -54,79 +53,19 @@ export default function MeetingRoom({ token, wsUrl, meeting, onLeave, isAdmin }:
 
     room.on(RoomEvent.TrackSubscribed, rerender);
     room.on(RoomEvent.TrackUnsubscribed, rerender);
-    room.on(RoomEvent.TrackPublished, rerender);
-    room.on(RoomEvent.TrackUnpublished, rerender);
-    room.on(RoomEvent.TrackStreamStateChanged, rerender);
-    room.on(RoomEvent.ParticipantMetadataChanged, rerender);
-    room.on(RoomEvent.ParticipantNameChanged, rerender);
-    room.on(RoomEvent.ParticipantConnected, (participant) => {
-      for (const publication of participant.videoTrackPublications.values()) {
-        if (!publication.isSubscribed) void publication.setSubscribed(true);
-      }
-      for (const publication of participant.audioTrackPublications.values()) {
-        if (!publication.isSubscribed) void publication.setSubscribed(true);
-      }
-      rerender();
-    });
+    room.on(RoomEvent.ParticipantConnected, rerender);
     room.on(RoomEvent.ParticipantDisconnected, rerender);
     room.on(RoomEvent.LocalTrackPublished, rerender);
     room.on(RoomEvent.LocalTrackUnpublished, rerender);
     room.on(RoomEvent.TrackMuted, rerender);
     room.on(RoomEvent.TrackUnmuted, rerender);
     room.on(RoomEvent.DataReceived, onData);
-    room.on(RoomEvent.Connected, () => {
-      if (!active) return;
-      setConnected(true);
-      setConnectionState("connected");
-      rerender();
-    });
-    room.on(RoomEvent.Reconnecting, () => {
-      if (!active) return;
-      setConnectionState("reconnecting");
-      rerender();
-    });
-    room.on(RoomEvent.Reconnected, () => {
-      if (!active) return;
-      setConnected(true);
-      setConnectionState("connected");
-      // After a network/browser reconnect, force subscribed publications to
-      // be rendered again. This also covers a page restored from bfcache.
-      for (const participant of [room.localParticipant, ...room.remoteParticipants.values()]) {
-        for (const publication of participant.videoTrackPublications.values()) {
-          if (!participant.isLocal && publication instanceof RemoteTrackPublication && !publication.isSubscribed) {
-            void publication.setSubscribed(true);
-          }
-        }
-      }
-      rerender();
-    });
-    room.on(RoomEvent.Disconnected, () => {
-      if (!active) return;
-      setConnected(false);
-      setConnectionState("disconnected");
-      rerender();
-    });
-
-    // LiveKit normally auto-subscribes, but explicitly subscribing to any
-    // already-published remote media makes refresh/reconnect deterministic.
-    const subscribeExistingRemoteTracks = () => {
-      for (const participant of room.remoteParticipants.values()) {
-        for (const publication of participant.videoTrackPublications.values()) {
-          if (!publication.isSubscribed) void publication.setSubscribed(true);
-        }
-        for (const publication of participant.audioTrackPublications.values()) {
-          if (!publication.isSubscribed) void publication.setSubscribed(true);
-        }
-      }
-      rerender();
-    };
+    room.on(RoomEvent.Disconnected, () => active && setConnected(false));
 
     room.connect(wsUrl, token)
       .then(async () => {
         if (!active) return;
         setConnected(true);
-        setConnectionState("connected");
-        subscribeExistingRemoteTracks();
         // Bug fix: publishing the local mic/camera is best-effort, not a
         // precondition for joining. This used to be two bare `await`s
         // inside this .then(), so ANY media failure — permission denied,
@@ -325,21 +264,40 @@ export default function MeetingRoom({ token, wsUrl, meeting, onLeave, isAdmin }:
         </div>
       </header>
 
-      <main className={`flex min-h-0 flex-1 gap-3 ${participants.length === 1 && isAdmin ? "p-0" : "p-3 sm:p-5"}`}>
-        <div className={`mx-auto grid min-h-0 min-w-0 max-w-7xl flex-1 gap-3 ${participants.length === 1 && isAdmin ? "h-full grid-cols-1" : participants.length === 1 ? "h-fit grid-cols-1" : "h-fit sm:grid-cols-2 lg:grid-cols-3"}`}>
-          {participants.map((participant) => <div key={participant.identity} className={`relative min-h-0 ${participants.length === 1 && isAdmin ? "h-full" : ""}`}>
-            <ParticipantTile participant={participant} refresh={refresh} />
-            {isAdmin && !participant.isLocal && (
-              <button
-                disabled={moderationBusy === participant.identity}
-                onClick={() => removeParticipant(participant.identity)}
-                className="absolute right-3 top-3 flex items-center gap-1.5 rounded-full bg-black/60 px-3 py-1.5 text-xs font-semibold text-white backdrop-blur transition hover:bg-red-600 disabled:opacity-50"
-              >
-                <UserXIcon className="h-3.5 w-3.5" /> {moderationBusy === participant.identity ? "Removing…" : "Remove"}
-              </button>
-            )}
-          </div>)}
-          {!connected && <p className="col-span-full py-10 text-center text-sm text-white/60">{connectionState === "reconnecting" ? "Reconnecting to the live class…" : "Connecting to the live class…"}</p>}
+      <main className="flex min-h-0 flex-1 gap-3 p-3 sm:p-5">
+        {/* Bug fix: a single participant used to sit in a `grid h-fit` row
+            with no defined height, so the video element (w-full h-full)
+            couldn't compute a real height, fell back to its tiny intrinsic
+            size, got stretched full-width, and object-cover cropped that
+            into an extreme zoomed sliver. Single participant now fills the
+            actual available height with flex; multiple participants keep
+            the grid but each tile gets a fixed aspect-video box so the
+            video always has real, predictable dimensions to fill. */}
+        <div
+          className={`mx-auto flex min-h-0 w-full max-w-7xl flex-1 gap-3 ${
+            participants.length === 1 ? "flex-col" : "grid h-fit content-start sm:grid-cols-2 lg:grid-cols-3"
+          }`}
+        >
+          {participants.map((participant) => (
+            <div
+              key={participant.identity}
+              className={`relative overflow-hidden rounded-2xl bg-ink-950 shadow-card ${
+                participants.length === 1 ? "min-h-0 flex-1" : "aspect-video"
+              }`}
+            >
+              <ParticipantTile participant={participant} refresh={refresh} />
+              {isAdmin && !participant.isLocal && (
+                <button
+                  disabled={moderationBusy === participant.identity}
+                  onClick={() => removeParticipant(participant.identity)}
+                  className="absolute right-3 top-3 flex items-center gap-1.5 rounded-full bg-black/60 px-3 py-1.5 text-xs font-semibold text-white backdrop-blur transition hover:bg-red-600 disabled:opacity-50"
+                >
+                  <UserXIcon className="h-3.5 w-3.5" /> {moderationBusy === participant.identity ? "Removing…" : "Remove"}
+                </button>
+              )}
+            </div>
+          ))}
+          {!connected && <p className="py-10 text-center text-sm text-white/60">Connecting to the live class…</p>}
         </div>
 
         {chatOpen && (
