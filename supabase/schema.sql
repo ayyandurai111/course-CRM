@@ -683,6 +683,21 @@ grant execute on function public.delete_content_cascade(uuid) to service_role;
 --   further gate. bootstrap_first_admin()/ADMIN_BOOTSTRAP_TOKEN remains
 --   available as a separate, token-gated path for promoting additional
 --   admins later without touching SEED_ADMIN_EMAIL.
+--   Google profile-photo sync (existing users): the INSERT's
+--   `on conflict (id) do update` clause below re-syncs `avatar_url`
+--   every time an existing user authenticates, not just on their very
+--   first login — Google account photos change, and a Live Meeting
+--   tile showing someone's camera-off photo should reflect that. This
+--   only ever touches avatar_url: role, is_active, name, and
+--   created_at of an existing row are left completely alone (no
+--   `excluded.role`/`excluded.is_active`/etc. anywhere in the update),
+--   so this cannot be used to silently re-promote/demote or reactivate
+--   an account the way a naive "upsert everything" would. It also only
+--   overwrites when p_avatar_url is non-null and actually different,
+--   so a transient failure to read the provider's photo this one login
+--   (isAllowedHttpsImageUrl rejecting it, or the field being briefly
+--   absent from user_metadata) can never wipe out a previously-synced
+--   photo.
 -- ---------------------------------------------------------------------
 drop function if exists public.get_or_create_user_profile(uuid, text, text, text);
 create or replace function public.get_or_create_user_profile(
@@ -718,7 +733,10 @@ begin
 
   insert into public.users (id, email, name, avatar_url, role, is_active)
     values (p_user_id, coalesce(p_email, ''), coalesce(p_name, ''), p_avatar_url, v_role, true)
-  on conflict (id) do nothing;
+  on conflict (id) do update
+    set avatar_url = excluded.avatar_url
+    where excluded.avatar_url is not null
+      and public.users.avatar_url is distinct from excluded.avatar_url;
 
   select * into v_user from public.users where id = p_user_id;
   return v_user;

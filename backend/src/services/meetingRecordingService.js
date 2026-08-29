@@ -5,6 +5,11 @@ const { buildStoragePath } = require("../lib/fileValidation");
 const { recordingS3Config, recordingEnabled, recordingTemplateBaseUrl } = require("../lib/recordingConfig");
 
 /**
+ * Live Meeting -> Meeting முடியும் (ends) -> Recording உருவாகும் (is
+ * created) -> Recording Storage-ல் save ஆகும் (saved to Storage) ->
+ * Admin Panel -> Meetings -> [Preview] [Publish] -> Course Content-ல்
+ * Video -> Student -> Normal Video Player.
+ *
  * This module owns the middle of that pipeline: talking to LiveKit
  * Egress and turning its result into a DRAFT `content` row that the
  * existing publish flow (contentService.publishNow) already knows how

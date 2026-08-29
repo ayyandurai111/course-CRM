@@ -1,6 +1,6 @@
 import { useEffect, useMemo, useRef, useState } from "react";
 import { Room, RoomEvent, Track, type Participant, type RemoteParticipant } from "livekit-client";
-import ParticipantTile, { participantHasMedia } from "./ParticipantTile";
+import ParticipantTile, { participantHasMedia, getParticipantRole } from "./ParticipantTile";
 import { apiRequest, ApiError } from "../../lib/apiClient";
 import {
   MicIcon, MicOffIcon, VideoIcon, VideoOffIcon, MonitorIcon, MessageCircleIcon,
@@ -86,6 +86,16 @@ export default function MeetingRoom({ token, wsUrl, meeting, onLeave, isAdmin }:
   const [messages, setMessages] = useState<ChatMessage[]>([]);
   const [error, setError] = useState<string | null>(null);
   const [moderationBusy, setModerationBusy] = useState<string | null>(null);
+
+  // Which participant this client has manually chosen as the big
+  // "Main"/spotlight tile by clicking a small tile — purely local UI
+  // state (never broadcast), so it only ever affects this viewer's own
+  // screen, exactly like the design asks. `null` means "no manual pick,
+  // use the automatic default" (screen-share, then the Teacher, then
+  // anyone with video). Clicking the Teacher's own small tile is just a
+  // regular click on this same mechanism — nothing Teacher-specific is
+  // needed there, it's already "any small tile → Main".
+  const [manualSpotlightId, setManualSpotlightId] = useState<string | null>(null);
 
   // --- Presentation-only UI state below. Sidebar tab + a couple of
   // static info popovers — matching the new meeting UI layout.
@@ -294,20 +304,52 @@ export default function MeetingRoom({ token, wsUrl, meeting, onLeave, isAdmin }:
     return [room.localParticipant, ...Array.from(room.remoteParticipants.values())];
   }, [refresh, connected]);
 
+  // The room's Teacher, identified from the `role` carried in every
+  // participant's LiveKit token metadata (see meetings.routes.js) —
+  // this works for any client, not just "am I the admin looking at
+  // myself", which is all `isAdmin`/`isLocal` alone could tell us.
+  const teacherParticipant = useMemo(
+    () => participants.find((p) => getParticipantRole(p) === "ADMIN") ?? null,
+    [participants]
+  );
+
   // Presentation-only: which existing participant (from the array above)
-  // gets the large "spotlight" tile vs. the filmstrip. Prefers whoever is
-  // screen-sharing, then falls back to the first participant with a
-  // camera on, then just the first participant. Purely a display choice
-  // over data that already exists — doesn't change what's subscribed to.
+  // gets the large "spotlight"/Main tile vs. the filmstrip.
+  // 1. A manual pick (clicking a small tile — see filmstrip onClick
+  //    below) wins whenever that participant is still in the room.
+  // 2. Otherwise, prefer whoever is screen-sharing.
+  // 3. Otherwise, prefer the Teacher — this is the "Teacher is Main by
+  //    default" behavior, and also what a manual pick falls back to
+  //    once that pick leaves the meeting (see the effect below, which
+  //    clears a stale manual pick so this default takes back over).
+  // 4. Otherwise, the first participant with a camera on, then just
+  //    the first participant.
+  // Purely a display choice over data that already exists — doesn't
+  // change what's subscribed to.
   const spotlightParticipant = useMemo(() => {
     if (participants.length === 0) return null;
+    if (manualSpotlightId) {
+      const manual = participants.find((p) => p.identity === manualSpotlightId);
+      if (manual) return manual;
+    }
     const sharing = participants.find((p) =>
       Array.from(p.videoTrackPublications.values()).some((pub) => !!pub.track && pub.track.source === Track.Source.ScreenShare)
     );
     if (sharing) return sharing;
+    if (teacherParticipant) return teacherParticipant;
     const withVideo = participants.find((p) => Array.from(p.videoTrackPublications.values()).some((pub) => !!pub.track));
     return withVideo || participants[0];
-  }, [participants]);
+  }, [participants, manualSpotlightId, teacherParticipant]);
+
+  // If the person this client had manually spotlighted leaves the
+  // meeting, drop the manual pick so the memo above falls back to its
+  // default order (Teacher first) instead of quietly clinging to an
+  // identity nobody occupies anymore.
+  useEffect(() => {
+    if (manualSpotlightId && !participants.some((p) => p.identity === manualSpotlightId)) {
+      setManualSpotlightId(null);
+    }
+  }, [participants, manualSpotlightId]);
 
   const filmstripParticipants = participants.filter((p) => p !== spotlightParticipant);
 
@@ -699,7 +741,7 @@ export default function MeetingRoom({ token, wsUrl, meeting, onLeave, isAdmin }:
             >
               <ParticipantTile participant={spotlightParticipant} refresh={refresh} handRaised={spotlightParticipant.identity in raisedHands} />
               <div className="absolute left-3 top-3 flex items-center gap-2">
-                {isAdmin && spotlightParticipant.isLocal && (
+                {getParticipantRole(spotlightParticipant) === "ADMIN" && (
                   <span className="rounded-full bg-amber-500 px-2.5 py-1 text-[11px] font-semibold text-ink-950">Teacher</span>
                 )}
                 {spotlightParticipant.isSpeaking && (
@@ -742,11 +784,25 @@ export default function MeetingRoom({ token, wsUrl, meeting, onLeave, isAdmin }:
               {filmstripParticipants.map((participant) => (
                 <div
                   key={participant.identity}
-                  className={`relative aspect-video overflow-hidden rounded-xl bg-ink-950 shadow-card transition-shadow duration-150 sm:w-40 sm:shrink-0 ${
+                  onClick={() => setManualSpotlightId(participant.identity)}
+                  onKeyDown={(e) => {
+                    if (e.key === "Enter" || e.key === " ") {
+                      e.preventDefault();
+                      setManualSpotlightId(participant.identity);
+                    }
+                  }}
+                  role="button"
+                  tabIndex={0}
+                  aria-label={`Show ${participant.name || participant.identity} as the main tile`}
+                  title="Click to make this the main tile"
+                  className={`group relative aspect-video cursor-pointer overflow-hidden rounded-xl bg-ink-950 shadow-card transition-shadow duration-150 hover:ring-2 hover:ring-white/40 sm:w-40 sm:shrink-0 ${
                     participant.isSpeaking ? "ring-2 ring-emerald-400 ring-offset-2 ring-offset-ink-950" : ""
                   }`}
                 >
                   <ParticipantTile participant={participant} refresh={refresh} handRaised={participant.identity in raisedHands} />
+                  {getParticipantRole(participant) === "ADMIN" && (
+                    <span className="absolute left-2 top-2 rounded-full bg-amber-500 px-2 py-0.5 text-[10px] font-semibold text-ink-950">Teacher</span>
+                  )}
                   {participant.isSpeaking ? (
                     <div
                       aria-label="Speaking"
@@ -763,7 +819,7 @@ export default function MeetingRoom({ token, wsUrl, meeting, onLeave, isAdmin }:
                     (participantHasMedia(participant) || Date.now() - (joinTimesRef.current.get(participant.identity) ?? 0) > PARTICIPANT_REMOVE_GRACE_MS) && (
                     <button
                       disabled={moderationBusy === participant.identity}
-                      onClick={() => removeParticipant(participant.identity)}
+                      onClick={(e) => { e.stopPropagation(); removeParticipant(participant.identity); }}
                       aria-label="Remove participant"
                       className="absolute bottom-2 right-2 flex h-6 w-6 items-center justify-center rounded-full bg-black/60 text-white backdrop-blur transition hover:bg-red-600 disabled:opacity-50"
                     >

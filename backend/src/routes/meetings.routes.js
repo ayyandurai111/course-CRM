@@ -331,7 +331,11 @@ router.get("/:id/token", authenticate, async (req, res, next) => {
       // (matches Google Meet's behavior). req.user.avatarUrl is already
       // validated as an allow-listed HTTPS image URL wherever it's set
       // (see auth.js / me.routes.js), so no new validation needed here.
-      metadata: JSON.stringify({ avatarUrl: req.user.avatarUrl || null }),
+      // `role` rides along the same metadata so every client can tell
+      // which participant is the Teacher (used by the spotlight/main-tile
+      // click feature below) without guessing from `isLocal`, which only
+      // tells you about yourself.
+      metadata: JSON.stringify({ avatarUrl: req.user.avatarUrl || null, role: isAdmin ? "ADMIN" : "STUDENT" }),
       ttl: "2h",
     });
     token.addGrant({ roomJoin: true, room: meeting.roomName, canPublish: true, canSubscribe: true, canPublishData: true });
