@@ -73,7 +73,7 @@ export default function OverviewSection() {
   return (
     <div>
       <h1 className="font-display text-xl font-semibold text-ink-950">Overview</h1>
-      <div className="mt-5 grid gap-4 sm:grid-cols-2 lg:grid-cols-3">
+      <div className="mt-5 grid grid-cols-2 gap-3 sm:gap-4 lg:grid-cols-3">
         {cards.map((c) => (
           <div key={c.label} className="rounded-xl2 border border-ink-900/8 bg-white p-5 shadow-card">
             <p className="text-xs font-medium uppercase tracking-wide text-ink-500">{c.label}</p>

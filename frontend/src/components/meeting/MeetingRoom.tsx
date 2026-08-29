@@ -577,7 +577,7 @@ export default function MeetingRoom({ token, wsUrl, meeting, onLeave, isAdmin }:
   );
 
   return (
-    <div className="flex min-h-screen flex-col bg-ink-950 text-white">
+    <div className="flex h-dvh min-h-screen flex-col overflow-hidden bg-ink-950 text-white">
       {/* Screen-recording-style indicator: a floating pill fixed to the
           top-center of the screen with a pulsing red dot and a live
           mm:ss timer, the same visual language as macOS/Zoom's "this is
@@ -596,7 +596,7 @@ export default function MeetingRoom({ token, wsUrl, meeting, onLeave, isAdmin }:
         </div>
       )}
 
-      <header className="relative flex items-center justify-between gap-3 border-b border-white/10 px-4 py-3 sm:px-6">
+      <header className="relative flex shrink-0 items-center justify-between gap-3 border-b border-white/10 px-4 py-3 sm:px-6">
         <div className="flex min-w-0 items-center gap-3">
           <button onClick={leave} aria-label="Back" className="shrink-0 rounded-full p-2 text-white/70 transition hover:bg-white/10 hover:text-white">
             <ArrowLeftIcon className="h-5 w-5" />
@@ -688,7 +688,7 @@ export default function MeetingRoom({ token, wsUrl, meeting, onLeave, isAdmin }:
         </div>
       </header>
 
-      <main className="flex min-h-0 flex-1 gap-3 p-3 sm:p-5">
+      <main className="flex min-h-0 flex-1 gap-3 overflow-y-auto p-3 sm:p-5">
         <div className="mx-auto flex min-h-0 w-full max-w-6xl flex-1 flex-col gap-3">
           {/* Spotlight tile */}
           {spotlightParticipant && (
@@ -821,12 +821,12 @@ export default function MeetingRoom({ token, wsUrl, meeting, onLeave, isAdmin }:
             hand, and a student doesn't need a moderator's "who's here"
             shortcut sitting in their thumb's way, so each role gets a
             leaner bar tailored to what they'd actually reach for. */}
-      <footer className="sticky bottom-0 border-t border-white/10 bg-ink-950/95 px-3 py-4 backdrop-blur sm:px-6">
-        <div className="mx-auto flex max-w-4xl flex-wrap items-center justify-center gap-2 sm:gap-3">
+      <footer className="sticky bottom-0 shrink-0 border-t border-white/10 bg-ink-950/95 px-3 pb-[max(1rem,env(safe-area-inset-bottom))] pt-4 backdrop-blur sm:px-6">
+        <div className="mx-auto flex max-w-4xl flex-wrap items-center justify-center gap-1.5 sm:gap-3">
           <button
             onClick={toggleMic}
             aria-pressed={micOn}
-            className={`flex flex-col items-center gap-1 rounded-2xl px-4 py-2.5 text-[11px] font-medium transition ${micOn ? "bg-white/10 text-white hover:bg-white/15" : "bg-red-600 text-white hover:bg-red-500"}`}
+            className={`flex flex-col items-center gap-1 rounded-2xl px-3 py-2.5 text-[11px] font-medium transition sm:px-4 ${micOn ? "bg-white/10 text-white hover:bg-white/15" : "bg-red-600 text-white hover:bg-red-500"}`}
           >
             {micOn ? <MicIcon className="h-5 w-5" /> : <MicOffIcon className="h-5 w-5" />}
             {micOn ? "Mute" : "Unmute"}
@@ -834,7 +834,7 @@ export default function MeetingRoom({ token, wsUrl, meeting, onLeave, isAdmin }:
           <button
             onClick={toggleCamera}
             aria-pressed={cameraOn}
-            className={`flex flex-col items-center gap-1 rounded-2xl px-4 py-2.5 text-[11px] font-medium transition ${cameraOn ? "bg-white/10 text-white hover:bg-white/15" : "bg-red-600 text-white hover:bg-red-500"}`}
+            className={`flex flex-col items-center gap-1 rounded-2xl px-3 py-2.5 text-[11px] font-medium transition sm:px-4 ${cameraOn ? "bg-white/10 text-white hover:bg-white/15" : "bg-red-600 text-white hover:bg-red-500"}`}
           >
             {cameraOn ? <VideoIcon className="h-5 w-5" /> : <VideoOffIcon className="h-5 w-5" />}
             {cameraOn ? "Stop Video" : "Start Video"}
@@ -862,7 +862,7 @@ export default function MeetingRoom({ token, wsUrl, meeting, onLeave, isAdmin }:
             <button
               onClick={() => void toggleHand()}
               aria-pressed={handRaised}
-              className={`flex flex-col items-center gap-1 rounded-2xl px-4 py-2.5 text-[11px] font-medium transition ${handRaised ? "bg-amber-500 text-ink-950 hover:bg-amber-400" : "bg-white/10 text-white hover:bg-white/15"}`}
+              className={`flex flex-col items-center gap-1 rounded-2xl px-3 py-2.5 text-[11px] font-medium transition sm:px-4 ${handRaised ? "bg-amber-500 text-ink-950 hover:bg-amber-400" : "bg-white/10 text-white hover:bg-white/15"}`}
             >
               <HandIcon className="h-5 w-5" />
               {handRaised ? "Lower Hand" : "Raise Hand"}
@@ -872,7 +872,7 @@ export default function MeetingRoom({ token, wsUrl, meeting, onLeave, isAdmin }:
           <button
             onClick={() => { setChatOpen((v) => !(v && sidebarTab === "chat")); setSidebarTab("chat"); }}
             aria-pressed={chatOpen && sidebarTab === "chat"}
-            className={`relative flex flex-col items-center gap-1 rounded-2xl px-4 py-2.5 text-[11px] font-medium transition ${chatOpen && sidebarTab === "chat" ? "bg-amber-500 text-ink-950" : "bg-white/10 text-white hover:bg-white/15"}`}
+            className={`relative flex flex-col items-center gap-1 rounded-2xl px-3 py-2.5 text-[11px] font-medium transition sm:px-4 ${chatOpen && sidebarTab === "chat" ? "bg-amber-500 text-ink-950" : "bg-white/10 text-white hover:bg-white/15"}`}
           >
             <MessageCircleIcon className="h-5 w-5" />
             Chat
@@ -905,7 +905,7 @@ export default function MeetingRoom({ token, wsUrl, meeting, onLeave, isAdmin }:
               <button
                 onClick={() => setFooterMoreOpen((v) => !v)}
                 aria-expanded={footerMoreOpen}
-                className={`flex flex-col items-center gap-1 rounded-2xl px-4 py-2.5 text-[11px] font-medium transition ${footerMoreOpen ? "bg-amber-500 text-ink-950" : "bg-white/10 text-white hover:bg-white/15"}`}
+                className={`flex flex-col items-center gap-1 rounded-2xl px-3 py-2.5 text-[11px] font-medium transition sm:px-4 ${footerMoreOpen ? "bg-amber-500 text-ink-950" : "bg-white/10 text-white hover:bg-white/15"}`}
               >
                 <MoreVerticalIcon className="h-5 w-5" />
                 More

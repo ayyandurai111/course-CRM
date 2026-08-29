@@ -1,6 +1,7 @@
 import { useEffect, useState } from "react";
 import { useNavigate } from "react-router-dom";
 import { useAuth } from "../context/AuthContext";
+import { ChevronDownIcon } from "../components/common/Icons";
 import AdminSidebar, { AdminSection } from "../components/admin/AdminSidebar";
 import OverviewSection from "../components/admin/OverviewSection";
 import CoursesSection from "../components/admin/CoursesSection";
@@ -24,6 +25,7 @@ export default function AdminPanel() {
   // visited still aren't mounted, so we don't fetch data the user hasn't
   // asked to see.
   const [visited, setVisited] = useState<Set<AdminSection>>(() => new Set(["overview"]));
+  const [menuOpen, setMenuOpen] = useState(false);
 
   useEffect(() => {
     setVisited((prev) => (prev.has(section) ? prev : new Set(prev).add(section)));
@@ -36,13 +38,44 @@ export default function AdminPanel() {
 
   return (
     <div className="min-h-screen bg-paper-50">
-      <header className="sticky top-0 z-30 flex items-center justify-between border-b border-ink-900/8 bg-white px-5 py-3">
-        <span className="min-w-0 truncate font-display text-lg font-semibold text-ink-950">Coursewell Admin</span>
-        <div className="flex items-center gap-4">
-          <span className="hidden max-w-[18rem] truncate text-sm text-ink-500 sm:inline">{user?.email}</span>
-          <button onClick={handleLogout} className="rounded-full border border-ink-900/15 px-3.5 py-1.5 text-sm font-medium text-ink-700 hover:bg-ink-100">
-            Log out
-          </button>
+      {/* Matches the student dashboard header: sticky, translucent/blur,
+          brand mark on the left, avatar-triggered dropdown (name, email,
+          log out) on the right — so the two "main screens" read as one
+          consistent app instead of two different header styles. */}
+      <header className="sticky top-0 z-30 border-b border-ink-900/8 bg-paper-50/90 backdrop-blur-md">
+        <div className="flex items-center justify-between px-5 py-4">
+          <span className="min-w-0 truncate font-display text-lg font-semibold text-ink-950">Coursewell Admin</span>
+          <div className="relative">
+            <button
+              onClick={() => setMenuOpen((o) => !o)}
+              aria-haspopup="menu"
+              aria-expanded={menuOpen}
+              className="flex items-center gap-2 rounded-full py-1 pl-1 pr-2.5 hover:bg-ink-100"
+            >
+              <span className="flex h-9 w-9 items-center justify-center rounded-full bg-ink-950 font-display text-sm font-semibold text-paper-50">
+                {user?.name?.[0]?.toUpperCase() || "?"}
+              </span>
+              <ChevronDownIcon className={`h-4 w-4 text-ink-500 transition ${menuOpen ? "rotate-180" : ""}`} />
+            </button>
+            {menuOpen && (
+              <div
+                role="menu"
+                className="absolute right-0 mt-2 w-52 overflow-hidden rounded-xl2 border border-ink-900/8 bg-white shadow-card"
+              >
+                <div className="border-b border-ink-900/8 px-4 py-3">
+                  <p className="truncate text-sm font-medium text-ink-900">{user?.name}</p>
+                  <p className="truncate text-xs text-ink-500">{user?.email}</p>
+                </div>
+                <button
+                  role="menuitem"
+                  onClick={handleLogout}
+                  className="block w-full px-4 py-2.5 text-left text-sm text-red-600 hover:bg-red-50"
+                >
+                  Log out
+                </button>
+              </div>
+            )}
+          </div>
         </div>
       </header>
 
