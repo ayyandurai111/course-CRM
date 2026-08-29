@@ -1,6 +1,7 @@
 import { useEffect, useState, useCallback, useRef } from "react";
 import { useNavigate } from "react-router-dom";
 import { apiRequest, ApiError } from "../lib/apiClient";
+import { formatIst } from "../lib/istTime";
 import { useAuth } from "../context/AuthContext";
 import type { ContentItem, ContentType, Course, Subscription, Meeting } from "../types";
 import DashboardHeader from "../components/student/DashboardHeader";
@@ -164,7 +165,7 @@ export default function StudentDashboard() {
                     <span className={`rounded-full px-2.5 py-1 text-xs font-semibold ${meeting.status === "LIVE" ? "bg-red-500/10 text-red-700" : "bg-ink-100 text-ink-600"}`}>{meeting.status}</span>
                   </div>
                   <p className="mt-3 text-sm text-ink-500">{meeting.description || "Live course meeting"}</p>
-                  <p className="mt-3 text-xs font-medium text-ink-600">{new Date(meeting.scheduledAt).toLocaleString()}</p>
+                  <p className="mt-3 text-xs font-medium text-ink-600">{formatIst(meeting.scheduledAt)} IST</p>
                   {meeting.status === "LIVE" ? (
                     <button onClick={() => navigate(`/meeting/${meeting.id}`)} className="mt-4 w-full rounded-full bg-ink-950 px-4 py-2 text-sm font-semibold text-white">Join meeting</button>
                   ) : (

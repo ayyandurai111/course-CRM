@@ -19,7 +19,17 @@ interface RequestOptions {
   timeoutMs?: number;
 }
 
-async function getToken(): Promise<string | null> {
+async function getToken(forceRefresh = false): Promise<string | null> {
+  if (forceRefresh) {
+    // The cached session's access token can go stale while the tab is
+    // busy elsewhere (e.g. a WebRTC/LiveKit call), since the
+    // background auto-refresh timer isn't guaranteed to fire in time.
+    // Force Supabase to actually re-validate/refresh against its
+    // server instead of trusting whatever is cached in localStorage.
+    const { data, error } = await supabase.auth.refreshSession();
+    if (error) throw new ApiError("Your session could not be checked. Please sign in again.", 401);
+    return data.session?.access_token ?? null;
+  }
   const { data, error } = await supabase.auth.getSession();
   if (error) throw new ApiError("Your session could not be checked. Please sign in again.", 401);
   return data.session?.access_token ?? null;
@@ -36,9 +46,8 @@ async function readResponse(res: Response): Promise<Record<string, unknown>> {
   }
 }
 
-export async function apiRequest<T = unknown>(path: string, options: RequestOptions = {}): Promise<T> {
+async function doFetch(path: string, options: RequestOptions, token: string | null): Promise<Response> {
   const { method = "GET", body, isFormData = false, signal, timeoutMs = 30000 } = options;
-  const token = await getToken();
   const headers: Record<string, string> = { Accept: "application/json" };
   if (token) headers.Authorization = `Bearer ${token}`;
   if (!isFormData && body !== undefined) headers["Content-Type"] = "application/json";
@@ -49,12 +58,37 @@ export async function apiRequest<T = unknown>(path: string, options: RequestOpti
   const timer = window.setTimeout(() => controller.abort(), timeoutMs);
 
   try {
-    const res = await fetch(`/api${path}`, {
+    return await fetch(`/api${path}`, {
       method,
       headers,
       body: body === undefined ? undefined : (isFormData ? body as FormData : JSON.stringify(body)),
       signal: controller.signal,
     });
+  } finally {
+    window.clearTimeout(timer);
+    signal?.removeEventListener("abort", onAbort);
+  }
+}
+
+export async function apiRequest<T = unknown>(path: string, options: RequestOptions = {}): Promise<T> {
+  try {
+    let token = await getToken();
+    let res = await doFetch(path, options, token);
+
+    // The cached Supabase session can be stale (e.g. after the tab was
+    // busy in a LiveKit call and missed its background token refresh).
+    // On a 401, force a real refresh against Supabase once and retry
+    // before giving up and telling the user to sign in again.
+    if (res.status === 401) {
+      try {
+        token = await getToken(true);
+        res = await doFetch(path, options, token);
+      } catch {
+        // Refresh itself failed (e.g. refresh token also expired) —
+        // fall through and let the original 401 response be handled below.
+      }
+    }
+
     const data = await readResponse(res);
     if (res.status === 204) return undefined as T;
     if (!res.ok) {
@@ -70,12 +104,9 @@ export async function apiRequest<T = unknown>(path: string, options: RequestOpti
   } catch (err) {
     if (err instanceof ApiError) throw err;
     if (err instanceof DOMException && err.name === "AbortError") {
-      throw new ApiError(signal?.aborted ? "Request cancelled." : "The request timed out. Please try again.", 408);
+      throw new ApiError(options.signal?.aborted ? "Request cancelled." : "The request timed out. Please try again.", 408);
     }
     throw new ApiError("Network error. Please check your connection and try again.", 0);
-  } finally {
-    window.clearTimeout(timer);
-    signal?.removeEventListener("abort", onAbort);
   }
 }
 
