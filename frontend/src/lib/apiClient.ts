@@ -19,6 +19,8 @@ interface RequestOptions {
   timeoutMs?: number;
 }
 
+let inFlightRefresh: Promise<string | null> | null = null;
+
 async function getToken(forceRefresh = false): Promise<string | null> {
   if (forceRefresh) {
     // The cached session's access token can go stale while the tab is
@@ -26,9 +28,33 @@ async function getToken(forceRefresh = false): Promise<string | null> {
     // background auto-refresh timer isn't guaranteed to fire in time.
     // Force Supabase to actually re-validate/refresh against its
     // server instead of trusting whatever is cached in localStorage.
-    const { data, error } = await supabase.auth.refreshSession();
-    if (error) throw new ApiError("Your session could not be checked. Please sign in again.", 401);
-    return data.session?.access_token ?? null;
+    //
+    // Bug fix: pages that fire several requests at once (e.g.
+    // OverviewSection's Promise.all of /admin/overview +
+    // /admin/audit-logs) used to have EACH request independently call
+    // refreshSession() the moment its own 401 came back. Supabase
+    // refresh tokens are single-use/rotating, so of two simultaneous
+    // refreshSession() calls only the first actually succeeds — the
+    // second is presenting an already-consumed token and gets a hard
+    // 400 back from Supabase's server ("Invalid Refresh Token"). That
+    // failure used to be swallowed and silently re-shown as "Invalid
+    // or expired session" even though the login itself was completely
+    // fine, just raced. Sharing one in-flight refresh promise across
+    // every concurrent caller means there's only ever one real
+    // refreshSession() call in the air at a time — everyone else just
+    // awaits its result instead of racing it.
+    if (!inFlightRefresh) {
+      inFlightRefresh = supabase.auth
+        .refreshSession()
+        .then(({ data, error }) => {
+          if (error) throw new ApiError("Your session could not be checked. Please sign in again.", 401);
+          return data.session?.access_token ?? null;
+        })
+        .finally(() => {
+          inFlightRefresh = null;
+        });
+    }
+    return inFlightRefresh;
   }
   const { data, error } = await supabase.auth.getSession();
   if (error) throw new ApiError("Your session could not be checked. Please sign in again.", 401);
@@ -83,9 +109,23 @@ export async function apiRequest<T = unknown>(path: string, options: RequestOpti
       try {
         token = await getToken(true);
         res = await doFetch(path, options, token);
+        if (res.status === 401) {
+          // A genuinely fresh, just-refreshed token was STILL rejected
+          // — the session really is done for (e.g. the account was
+          // deleted, or Supabase's own project keys changed). Clear
+          // the stale session so App.tsx's RequireRole/RequireMeeting
+          // guards redirect to /login on their own, instead of the
+          // "Try again" button on this error retrying the exact same
+          // doomed request forever.
+          supabase.auth.signOut().catch(() => {});
+        }
       } catch {
-        // Refresh itself failed (e.g. refresh token also expired) —
-        // fall through and let the original 401 response be handled below.
+        // Refresh itself failed (e.g. refresh token also expired/
+        // revoked). Same reasoning as above: this session is not
+        // coming back on its own, so clear it now rather than leaving
+        // a dead session in localStorage for every future request to
+        // trip over again.
+        supabase.auth.signOut().catch(() => {});
       }
     }
 
