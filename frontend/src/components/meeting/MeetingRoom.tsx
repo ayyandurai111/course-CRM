@@ -7,7 +7,7 @@ import {
   // MicIcon doubles as the icon-only "speaking now" badge on tiles below —
   // deliberately no text label per the design ask (icon + colour only).
   UserXIcon, UsersIcon, XIcon, ArrowLeftIcon, ShieldIcon, MoreVerticalIcon,
-  HandIcon, SearchIcon, SendIcon, PhoneOffIcon, SignalIcon,
+  HandIcon, SearchIcon, SendIcon, SignalIcon,
 } from "../common/Icons";
 
 export interface MeetingInfo {
@@ -87,16 +87,28 @@ export default function MeetingRoom({ token, wsUrl, meeting, onLeave, isAdmin }:
   const [error, setError] = useState<string | null>(null);
   const [moderationBusy, setModerationBusy] = useState<string | null>(null);
 
-  // --- Presentation-only UI state below. None of this touches media,
-  // connection, or chat/moderation logic — it only controls what's
-  // shown on screen (which sidebar tab, a purely visual "raise hand"
-  // flag, and a couple of static info popovers), matching the new
-  // meeting UI layout.
-  const [handRaised, setHandRaised] = useState(false);
+  // --- Presentation-only UI state below. Sidebar tab + a couple of
+  // static info popovers — matching the new meeting UI layout.
   const [sidebarTab, setSidebarTab] = useState<"participants" | "chat">("chat");
   const [participantSearch, setParticipantSearch] = useState("");
   const [showMoreMenu, setShowMoreMenu] = useState(false);
   const [showSecurityInfo, setShowSecurityInfo] = useState(false);
+  // Bottom-bar "More" popover — students only (see footer). Separate
+  // from `showMoreMenu` above, which is the header's own overflow menu;
+  // the two are independent popovers on independent buttons.
+  const [footerMoreOpen, setFooterMoreOpen] = useState(false);
+
+  // --- Raise hand. This one DOES touch real state shared with everyone
+  // else in the room: whether the *local* participant's hand is up
+  // drives the footer button, and `raisedHands` is the full roster of
+  // who currently has a hand raised, keyed by identity, kept in sync
+  // across every client over the room's data channel (topic "hand") the
+  // same way chat messages already travel. A student raising a hand is
+  // pointless if the teacher never finds out, so this needs to actually
+  // reach everyone else, not just flip a local flag.
+  const [handRaised, setHandRaised] = useState(false);
+  const [raisedHands, setRaisedHands] = useState<Record<string, { name: string; ts: number }>>({});
+  const raisedHandCount = Object.keys(raisedHands).length;
 
   // Real recording state — driven by meeting.recordingStatus, which the
   // backend already sets when LiveKit Egress actually starts/stops (see
@@ -130,13 +142,32 @@ export default function MeetingRoom({ token, wsUrl, meeting, onLeave, isAdmin }:
 
     const rerender = () => active && setRefresh((v) => v + 1);
     const onData = (payload: Uint8Array, participant?: RemoteParticipant, _kind?: unknown, topic?: string) => {
-      if (!active || topic !== "chat") return;
-      try {
-        const data = JSON.parse(new TextDecoder().decode(payload)) as { text?: string; id?: string };
-        const text = data.text;
-        if (!text || !participant) return;
-        setMessages((prev) => [...prev, { id: data.id || crypto.randomUUID(), sender: participant.name || participant.identity, text, own: false }]);
-      } catch { /* Ignore malformed room data. */ }
+      if (!active) return;
+      if (topic === "chat") {
+        try {
+          const data = JSON.parse(new TextDecoder().decode(payload)) as { text?: string; id?: string };
+          const text = data.text;
+          if (!text || !participant) return;
+          setMessages((prev) => [...prev, { id: data.id || crypto.randomUUID(), sender: participant.name || participant.identity, text, own: false }]);
+        } catch { /* Ignore malformed room data. */ }
+      } else if (topic === "hand" && participant) {
+        // Broadcast from toggleHand() below on every OTHER client — the
+        // local participant updates its own `raisedHands` entry directly
+        // when it toggles, since LiveKit doesn't echo your own published
+        // data back to you.
+        try {
+          const data = JSON.parse(new TextDecoder().decode(payload)) as { raised?: boolean };
+          setRaisedHands((prev) => {
+            if (data.raised) {
+              return { ...prev, [participant.identity]: { name: participant.name || participant.identity, ts: Date.now() } };
+            }
+            if (!(participant.identity in prev)) return prev;
+            const next = { ...prev };
+            delete next[participant.identity];
+            return next;
+          });
+        } catch { /* Ignore malformed room data. */ }
+      }
     };
 
     room.on(RoomEvent.TrackSubscribed, rerender);
@@ -163,7 +194,17 @@ export default function MeetingRoom({ token, wsUrl, meeting, onLeave, isAdmin }:
       rerender();
       window.setTimeout(rerender, PARTICIPANT_REMOVE_GRACE_MS + 50);
     });
-    room.on(RoomEvent.ParticipantDisconnected, rerender);
+    room.on(RoomEvent.ParticipantDisconnected, (p) => {
+      // A participant who leaves with their hand up shouldn't leave a
+      // ghost entry in the raised-hands roster behind them.
+      setRaisedHands((prev) => {
+        if (!(p.identity in prev)) return prev;
+        const next = { ...prev };
+        delete next[p.identity];
+        return next;
+      });
+      rerender();
+    });
     room.on(RoomEvent.LocalTrackPublished, rerender);
     room.on(RoomEvent.LocalTrackUnpublished, rerender);
     room.on(RoomEvent.TrackMuted, rerender);
@@ -325,6 +366,35 @@ export default function MeetingRoom({ token, wsUrl, meeting, onLeave, isAdmin }:
     }
   }
 
+  // Students only (see footer) — the teacher doesn't raise their own
+  // hand. Flips the local flag immediately (so the button feels
+  // instant even on a slow connection) and updates this client's own
+  // entry in `raisedHands` directly, since publishData never echoes
+  // back to its own sender — then broadcasts the change so every other
+  // participant, especially the admin, sees it too.
+  async function toggleHand() {
+    const room = roomRef.current;
+    if (!room) return;
+    const next = !handRaised;
+    setHandRaised(next);
+    const localId = room.localParticipant.identity;
+    setRaisedHands((prev) => {
+      if (next) return { ...prev, [localId]: { name: room.localParticipant.name || localId, ts: Date.now() } };
+      if (!(localId in prev)) return prev;
+      const rest = { ...prev };
+      delete rest[localId];
+      return rest;
+    });
+    try {
+      await room.localParticipant.publishData(
+        new TextEncoder().encode(JSON.stringify({ raised: next })),
+        { reliable: true, topic: "hand" }
+      );
+    } catch (err) {
+      console.warn("Could not broadcast raised hand:", err);
+    }
+  }
+
   async function sendChat() {
     const room = roomRef.current;
     const text = chatInput.trim();
@@ -365,6 +435,16 @@ export default function MeetingRoom({ token, wsUrl, meeting, onLeave, isAdmin }:
     document.addEventListener("keydown", onKey);
     return () => document.removeEventListener("keydown", onKey);
   }, [chatOpen]);
+
+  // Same Escape-to-close for the footer "More" popover (students only).
+  useEffect(() => {
+    if (!footerMoreOpen) return;
+    function onKey(e: KeyboardEvent) {
+      if (e.key === "Escape") setFooterMoreOpen(false);
+    }
+    document.addEventListener("keydown", onKey);
+    return () => document.removeEventListener("keydown", onKey);
+  }, [footerMoreOpen]);
 
   // Shared chat message list + composer JSX, reused in both the mobile
   // bottom sheet and the desktop sidebar so the two surfaces can never
@@ -432,6 +512,9 @@ export default function MeetingRoom({ token, wsUrl, meeting, onLeave, isAdmin }:
               <p className="truncate text-sm text-white">{p.name || p.identity}{p.isLocal ? " (You)" : ""}</p>
               {isAdmin && p.isLocal && <p className="text-[11px] text-amber-400">Host</p>}
             </div>
+            {p.identity in raisedHands && (
+              <HandIcon aria-label="Hand raised" className="h-4 w-4 shrink-0 text-amber-400" />
+            )}
             {isMicMuted(p) ? <MicOffIcon className="h-4 w-4 shrink-0 text-red-400" /> : <MicIcon className="h-4 w-4 shrink-0 text-emerald-400" />}
             {isAdmin && !p.isLocal &&
               (participantHasMedia(p) || Date.now() - (joinTimesRef.current.get(p.identity) ?? 0) > PARTICIPANT_REMOVE_GRACE_MS) && (
@@ -541,6 +624,22 @@ export default function MeetingRoom({ token, wsUrl, meeting, onLeave, isAdmin }:
         </div>
 
         <div className="flex shrink-0 items-center gap-2">
+          {isAdmin && (
+            <span className="hidden rounded-full bg-amber-500/15 px-2.5 py-1 text-[11px] font-semibold uppercase tracking-wide text-amber-300 sm:inline">Host</span>
+          )}
+          {/* Admin-only alert: raised hands are meaningless to a teacher
+              unless they're actually surfaced somewhere the teacher will
+              see it, not just quietly tracked in state. Tapping it jumps
+              straight to the participants list, where each raised hand
+              is also flagged individually (see participantsList above). */}
+          {isAdmin && raisedHandCount > 0 && (
+            <button
+              onClick={() => { setChatOpen(true); setSidebarTab("participants"); }}
+              className="flex animate-pulse items-center gap-1.5 rounded-full bg-amber-500 px-3 py-2 text-xs font-semibold text-ink-950 transition hover:bg-amber-400"
+            >
+              <HandIcon className="h-4 w-4" /> {raisedHandCount}
+            </button>
+          )}
           <button
             onClick={() => { setChatOpen(true); setSidebarTab("participants"); }}
             className="hidden items-center gap-1.5 rounded-full bg-white/10 px-3 py-2 text-xs font-medium text-white transition hover:bg-white/15 sm:flex"
@@ -598,7 +697,7 @@ export default function MeetingRoom({ token, wsUrl, meeting, onLeave, isAdmin }:
                 spotlightParticipant.isSpeaking ? "ring-2 ring-emerald-400 ring-offset-2 ring-offset-ink-950" : ""
               }`}
             >
-              <ParticipantTile participant={spotlightParticipant} refresh={refresh} />
+              <ParticipantTile participant={spotlightParticipant} refresh={refresh} handRaised={spotlightParticipant.identity in raisedHands} />
               <div className="absolute left-3 top-3 flex items-center gap-2">
                 {isAdmin && spotlightParticipant.isLocal && (
                   <span className="rounded-full bg-amber-500 px-2.5 py-1 text-[11px] font-semibold text-ink-950">Teacher</span>
@@ -629,17 +728,25 @@ export default function MeetingRoom({ token, wsUrl, meeting, onLeave, isAdmin }:
           )}
           {!connected && <p className="py-10 text-center text-sm text-white/60">Connecting to the live class…</p>}
 
-          {/* Filmstrip of everyone else */}
+          {/* Filmstrip of everyone else. Two responsive layouts sharing
+              the same tiles: on narrow (mobile/portrait) screens this is
+              a fixed 2-column grid that scrolls vertically within its
+              own bounded height, matching the "class roster" grid look
+              of the mobile design — a horizontal-scroll strip doesn't
+              work well one-handed on a phone. From `sm` up (tablet
+              landscape/desktop, more horizontal room) it switches back
+              to the original horizontally-scrolling row of fixed-width
+              thumbnails. */}
           {filmstripParticipants.length > 0 && (
-            <div className="flex shrink-0 gap-3 overflow-x-auto pb-1">
+            <div className="grid max-h-[38vh] grid-cols-2 gap-3 overflow-y-auto pb-1 sm:flex sm:max-h-none sm:shrink-0 sm:gap-3 sm:overflow-x-auto sm:overflow-y-visible">
               {filmstripParticipants.map((participant) => (
                 <div
                   key={participant.identity}
-                  className={`relative aspect-video w-32 shrink-0 overflow-hidden rounded-xl bg-ink-950 shadow-card transition-shadow duration-150 sm:w-40 ${
+                  className={`relative aspect-video overflow-hidden rounded-xl bg-ink-950 shadow-card transition-shadow duration-150 sm:w-40 sm:shrink-0 ${
                     participant.isSpeaking ? "ring-2 ring-emerald-400 ring-offset-2 ring-offset-ink-950" : ""
                   }`}
                 >
-                  <ParticipantTile participant={participant} refresh={refresh} />
+                  <ParticipantTile participant={participant} refresh={refresh} handRaised={participant.identity in raisedHands} />
                   {participant.isSpeaking ? (
                     <div
                       aria-label="Speaking"
@@ -703,6 +810,17 @@ export default function MeetingRoom({ token, wsUrl, meeting, onLeave, isAdmin }:
         )}
       </main>
 
+      {/* Bottom control bar. Two changes from before:
+          - The old standalone red "Leave" circle and the bottom "More"
+            button (which toggled `showMoreMenu` but had no popover of
+            its own down here — it silently did nothing) are both gone.
+            Leaving now lives in exactly one place, the header's back
+            arrow / "Leave Meeting" button, instead of two.
+          - Controls now split by role instead of showing the same six
+            buttons to everyone: the teacher doesn't raise their own
+            hand, and a student doesn't need a moderator's "who's here"
+            shortcut sitting in their thumb's way, so each role gets a
+            leaner bar tailored to what they'd actually reach for. */}
       <footer className="sticky bottom-0 border-t border-white/10 bg-ink-950/95 px-3 py-4 backdrop-blur sm:px-6">
         <div className="mx-auto flex max-w-4xl flex-wrap items-center justify-center gap-2 sm:gap-3">
           <button
@@ -721,22 +839,36 @@ export default function MeetingRoom({ token, wsUrl, meeting, onLeave, isAdmin }:
             {cameraOn ? <VideoIcon className="h-5 w-5" /> : <VideoOffIcon className="h-5 w-5" />}
             {cameraOn ? "Stop Video" : "Start Video"}
           </button>
-          <button
-            onClick={toggleScreen}
-            aria-pressed={screenOn}
-            className={`flex flex-col items-center gap-1 rounded-2xl px-4 py-2.5 text-[11px] font-medium transition ${screenOn ? "bg-amber-500 text-ink-950 hover:bg-amber-400" : "bg-white/10 text-white hover:bg-white/15"}`}
-          >
-            <MonitorIcon className="h-5 w-5" />
-            {screenOn ? "Stop share" : "Share Screen"}
-          </button>
-          <button
-            onClick={() => setHandRaised((v) => !v)}
-            aria-pressed={handRaised}
-            className={`flex flex-col items-center gap-1 rounded-2xl px-4 py-2.5 text-[11px] font-medium transition ${handRaised ? "bg-amber-500 text-ink-950 hover:bg-amber-400" : "bg-white/10 text-white hover:bg-white/15"}`}
-          >
-            <HandIcon className="h-5 w-5" />
-            Raise Hand
-          </button>
+
+          {/* Screen share: primary, always-visible action for the
+              teacher (it's how they present), tucked into the "More"
+              popover below for students instead of taking up one of
+              their five thumb-reachable slots. */}
+          {isAdmin && (
+            <button
+              onClick={toggleScreen}
+              aria-pressed={screenOn}
+              className={`flex flex-col items-center gap-1 rounded-2xl px-4 py-2.5 text-[11px] font-medium transition ${screenOn ? "bg-amber-500 text-ink-950 hover:bg-amber-400" : "bg-white/10 text-white hover:bg-white/15"}`}
+            >
+              <MonitorIcon className="h-5 w-5" />
+              {screenOn ? "Stop share" : "Share Screen"}
+            </button>
+          )}
+
+          {/* Raise hand: students only. Broadcasts over the room's data
+              channel (see toggleHand above) so the teacher — and every
+              other student — actually sees it, not just a local toggle. */}
+          {!isAdmin && (
+            <button
+              onClick={() => void toggleHand()}
+              aria-pressed={handRaised}
+              className={`flex flex-col items-center gap-1 rounded-2xl px-4 py-2.5 text-[11px] font-medium transition ${handRaised ? "bg-amber-500 text-ink-950 hover:bg-amber-400" : "bg-white/10 text-white hover:bg-white/15"}`}
+            >
+              <HandIcon className="h-5 w-5" />
+              {handRaised ? "Lower Hand" : "Raise Hand"}
+            </button>
+          )}
+
           <button
             onClick={() => { setChatOpen((v) => !(v && sidebarTab === "chat")); setSidebarTab("chat"); }}
             aria-pressed={chatOpen && sidebarTab === "chat"}
@@ -745,30 +877,57 @@ export default function MeetingRoom({ token, wsUrl, meeting, onLeave, isAdmin }:
             <MessageCircleIcon className="h-5 w-5" />
             Chat
           </button>
-          <button
-            onClick={() => { setChatOpen((v) => !(v && sidebarTab === "participants")); setSidebarTab("participants"); }}
-            aria-pressed={chatOpen && sidebarTab === "participants"}
-            className={`relative flex flex-col items-center gap-1 rounded-2xl px-4 py-2.5 text-[11px] font-medium transition ${chatOpen && sidebarTab === "participants" ? "bg-amber-500 text-ink-950" : "bg-white/10 text-white hover:bg-white/15"}`}
-          >
-            <span className="relative">
-              <UsersIcon className="h-5 w-5" />
-              <span className="absolute -right-2 -top-1.5 rounded-full bg-amber-500 px-1 text-[9px] font-bold text-ink-950">{participants.length}</span>
-            </span>
-            Participants
-          </button>
-          <div className="relative">
+
+          {/* Participants: a moderator's roster/removal tool, so it
+              stays a direct, always-visible button for the teacher.
+              Students reach the same list through "More" below instead. */}
+          {isAdmin && (
             <button
-              onClick={() => setShowMoreMenu((v) => !v)}
-              className="flex flex-col items-center gap-1 rounded-2xl bg-white/10 px-4 py-2.5 text-[11px] font-medium text-white transition hover:bg-white/15"
+              onClick={() => { setChatOpen((v) => !(v && sidebarTab === "participants")); setSidebarTab("participants"); }}
+              aria-pressed={chatOpen && sidebarTab === "participants"}
+              className={`relative flex flex-col items-center gap-1 rounded-2xl px-4 py-2.5 text-[11px] font-medium transition ${chatOpen && sidebarTab === "participants" ? "bg-amber-500 text-ink-950" : "bg-white/10 text-white hover:bg-white/15"}`}
             >
-              <MoreVerticalIcon className="h-5 w-5" />
-              More
+              <span className="relative">
+                <UsersIcon className="h-5 w-5" />
+                <span className="absolute -right-2 -top-1.5 rounded-full bg-amber-500 px-1 text-[9px] font-bold text-ink-950">{participants.length}</span>
+              </span>
+              Participants
             </button>
-          </div>
-          <button onClick={leave} aria-label="Leave meeting" className="flex h-12 w-12 items-center justify-center rounded-full bg-red-600 text-white transition hover:bg-red-500">
-            <PhoneOffIcon className="h-5 w-5" />
-          </button>
-          {isAdmin && <span className="ml-2 hidden rounded-full bg-amber-500/15 px-2.5 py-1 text-[11px] font-semibold uppercase tracking-wide text-amber-300 sm:inline">Host</span>}
+          )}
+
+          {/* Students' "More": a real, working popover (unlike the old
+              bottom "More" button, which toggled state with no menu
+              attached to it) holding the two actions that didn't get
+              their own slot above — screen share and the participant
+              roster. */}
+          {!isAdmin && (
+            <div className="relative">
+              <button
+                onClick={() => setFooterMoreOpen((v) => !v)}
+                aria-expanded={footerMoreOpen}
+                className={`flex flex-col items-center gap-1 rounded-2xl px-4 py-2.5 text-[11px] font-medium transition ${footerMoreOpen ? "bg-amber-500 text-ink-950" : "bg-white/10 text-white hover:bg-white/15"}`}
+              >
+                <MoreVerticalIcon className="h-5 w-5" />
+                More
+              </button>
+              {footerMoreOpen && (
+                <div className="absolute bottom-full right-0 z-30 mb-2 w-52 rounded-xl border border-white/10 bg-ink-900 p-1 text-sm shadow-2xl">
+                  <button
+                    onClick={() => { void toggleScreen(); setFooterMoreOpen(false); }}
+                    className="flex w-full items-center gap-2.5 rounded-lg px-3 py-2 text-left text-white/80 hover:bg-white/10"
+                  >
+                    <MonitorIcon className="h-4 w-4" /> {screenOn ? "Stop sharing screen" : "Share screen"}
+                  </button>
+                  <button
+                    onClick={() => { setChatOpen(true); setSidebarTab("participants"); setFooterMoreOpen(false); }}
+                    className="flex w-full items-center gap-2.5 rounded-lg px-3 py-2 text-left text-white/80 hover:bg-white/10"
+                  >
+                    <UsersIcon className="h-4 w-4" /> Participants ({participants.length})
+                  </button>
+                </div>
+              )}
+            </div>
+          )}
         </div>
       </footer>
     </div>

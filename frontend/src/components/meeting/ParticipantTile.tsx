@@ -1,5 +1,6 @@
 import { useEffect, useRef, useState } from "react";
 import { Track, type Participant } from "livekit-client";
+import { HandIcon } from "../common/Icons";
 
 // Bug fix: a participant can have BOTH a camera track and a screen-share
 // track published at once (source: Track.Source.Camera vs. ScreenShare),
@@ -60,7 +61,18 @@ function getAvatarUrl(participant: Participant): string | null {
   }
 }
 
-export default function ParticipantTile({ participant, refresh }: { participant: Participant; refresh: number }) {
+export default function ParticipantTile({
+  participant,
+  refresh,
+  handRaised = false,
+}: {
+  participant: Participant;
+  refresh: number;
+  /** Whether this participant currently has their hand raised — see the
+   * "hand" data-channel messages in MeetingRoom, which is the source of
+   * truth this gets passed down from. Purely a display flag here. */
+  handRaised?: boolean;
+}) {
   const videoRef = useRef<HTMLVideoElement>(null);
   const audioRef = useRef<HTMLAudioElement>(null);
   const [avatarFailed, setAvatarFailed] = useState(false);
@@ -117,16 +129,36 @@ export default function ParticipantTile({ participant, refresh }: { participant:
           <p className="relative text-xs text-white/60">{participantHasMedia(participant) ? "Camera off" : "Joining…"}</p>
         </div>
       )}
+      {/* Bug fix: this tag used to render unconditionally with no
+          `hidden` guard, sitting AFTER (i.e. on top of, in DOM/paint
+          order) the "camera off" profile-picture div above — the two are
+          both `absolute inset-0` with no z-index, so whichever comes
+          later in the markup paints on top. As long as no stream had
+          ever been attached that was invisible: an empty <video> paints
+          fully transparent, so the profile picture showed through
+          underneath just fine. But once a real camera stream had played
+          here and was then turned off, browsers can leave the last
+          painted frame (or a plain black paint) behind even after the
+          track is detached and `srcObject` is cleared. That leftover
+          frame sat on top of the profile picture div and hid it, showing
+          a black tile instead — but only for someone who'd had their
+          camera on at some point in the call, which is exactly the
+          reported "off → on → off" sequence. Hiding the element with
+          `hidden` (rather than removing it from the tree) guarantees no
+          stale paint can ever cover the profile picture, while keeping
+          it mounted so the attach/detach effect below keeps a stable
+          ref instead of racing an unmount. */}
       <video
         ref={videoRef}
         autoPlay
         playsInline
         muted={participant.isLocal}
-        className={`absolute inset-0 h-full w-full ${isScreenSharing ? "object-contain" : "object-cover"}`}
+        className={`absolute inset-0 h-full w-full ${hasVideo ? "" : "hidden"} ${isScreenSharing ? "object-contain" : "object-cover"}`}
       />
       <audio ref={audioRef} autoPlay muted={participant.isLocal} />
       {isScreenSharing && <div className="absolute left-3 top-3 rounded-full bg-emerald-500/90 px-3 py-1 text-xs font-semibold text-white">Presenting</div>}
-      <div className="absolute bottom-3 left-3 rounded-full bg-black/60 px-3 py-1 text-xs font-medium text-white">
+      <div className="absolute bottom-3 left-3 flex items-center gap-1.5 rounded-full bg-black/60 px-3 py-1 text-xs font-medium text-white">
+        {handRaised && <HandIcon aria-label="Hand raised" className="h-3.5 w-3.5 shrink-0 text-amber-400" />}
         {displayName}{participant.isLocal ? " (You)" : ""}
       </div>
     </>
