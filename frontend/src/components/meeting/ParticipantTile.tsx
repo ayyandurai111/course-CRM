@@ -95,6 +95,7 @@ export default function ParticipantTile({
 
   const displayName = participant.name || participant.identity;
   const avatarUrl = getAvatarUrl(participant);
+  const initials = initials(displayName);
 
   // Renders into the parent tile's `relative` box (sized by MeetingRoom via
   // aspect-video or flex-1), so the video can be absolutely positioned to
@@ -122,12 +123,25 @@ export default function ParticipantTile({
             />
           ) : (
             <div className="flex h-14 w-14 items-center justify-center rounded-full bg-white/10 text-lg font-semibold text-white/70">
-              {initials(displayName)}
+              {initials}
             </div>
           )}
           {avatarUrl && !avatarFailed && <div className="absolute inset-0 bg-black/25" />}
           <p className="relative text-xs text-white/60">{participantHasMedia(participant) ? "Camera off" : "Joining…"}</p>
         </div>
+        {/* Fallback: if avatar was loaded once but then failed, or URL became
+            unreachable, make sure initials are always visible below the image.
+            This prevents the "black screen" gap when image load fails after
+            first render, or when metadata is missing/empty. */}
+        {!avatarUrl && !avatarFailed ? (
+          <div className="flex h-14 w-14 items-center justify-center rounded-full bg-white/10 text-lg font-semibold text-white/70">
+            {initials}
+          </div>
+        ) : avatarFailed && (
+          <div className="flex h-14 w-14 items-center justify-center rounded-full bg-white/10 text-lg font-semibold text-white/70">
+            {initials}
+          </div>
+        )}
       )}
       {/* Bug fix: this tag used to render unconditionally with no
           `hidden` guard, sitting AFTER (i.e. on top of, in DOM/paint

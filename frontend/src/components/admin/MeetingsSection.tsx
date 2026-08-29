@@ -8,10 +8,6 @@ import { ErrorState, EmptyState } from "../common/States";
 import VideoPlayerModal from "../content/VideoPlayerModal";
 
 /**
- * Live Meeting -> Meeting முடியும் -> Recording உருவாகும் -> Recording
- * Storage-ல் save ஆகும் -> Admin Panel -> Meetings -> [Preview]
- * [Publish] -> Course Content-ல் Video -> Student -> Normal Video Player.
- *
  * The recording badge/buttons below surface the recording_status the
  * backend maintains on each meeting (see meetingRecordingService.js):
  * NONE (no recording configured/attempted), RECORDING (live capture in
