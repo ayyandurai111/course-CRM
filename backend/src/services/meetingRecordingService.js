@@ -2,7 +2,7 @@ const crypto = require("crypto");
 const { EncodedFileOutput, S3Upload, EncodedFileType, EgressStatus } = require("livekit-server-sdk");
 const { supabase, row, toSnake, assertNoError } = require("../lib/db");
 const { buildStoragePath } = require("../lib/fileValidation");
-const { recordingS3Config, recordingEnabled } = require("../lib/recordingConfig");
+const { recordingS3Config, recordingEnabled, recordingTemplateBaseUrl } = require("../lib/recordingConfig");
 
 /**
  * Live Meeting -> Meeting முடியும் (ends) -> Recording உருவாகும் (is
@@ -60,8 +60,15 @@ async function startRecording({ meeting, egressClient }) {
       },
     });
 
+    // Custom layout (RecordingLayoutPage.tsx) when it's configured, so
+    // the recorded file matches the live meeting's own spotlight/
+    // filmstrip UI and speaking highlight — falls back to LiveKit's
+    // built-in "grid" template (unchanged prior behavior) when it's
+    // not, so recording never breaks over a missing/misconfigured URL.
+    const customBaseUrl = recordingTemplateBaseUrl();
     const info = await egressClient.startRoomCompositeEgress(meeting.roomName, output, {
       layout: "grid",
+      ...(customBaseUrl ? { customBaseUrl } : {}),
     });
 
     return {

@@ -25,4 +25,27 @@ function recordingEnabled() {
   return !!recordingS3Config();
 }
 
-module.exports = { recordingS3Config, recordingEnabled };
+// Optional custom recording layout: a URL to the frontend's
+// RecordingLayoutPage.tsx, passed to Egress as `customBaseUrl` so the
+// recorded FILE shows the same spotlight/filmstrip layout and speaking
+// highlight as the live MeetingRoom UI, instead of LiveKit's generic
+// built-in "grid" template.
+//
+// MEETING_RECORDING_TEMPLATE_URL lets an operator point this at
+// wherever Egress can actually reach it (useful in dev, where Egress
+// runs in its own container and "localhost" would mean the container,
+// not the host). In the common single-server Render deployment
+// (render.yaml) there's nothing to configure: RENDER_EXTERNAL_URL is
+// set automatically and already points at the one public URL that
+// serves this same frontend build.
+//
+// Recording works exactly as before (LiveKit's built-in "grid" layout)
+// if neither is set — this is purely additive.
+function recordingTemplateBaseUrl() {
+  const explicit = process.env.MEETING_RECORDING_TEMPLATE_URL;
+  const base = explicit || (process.env.RENDER_EXTERNAL_URL ? `${process.env.RENDER_EXTERNAL_URL}/recording-layout` : null);
+  if (!base) return null;
+  return base.replace(/\/+$/, "");
+}
+
+module.exports = { recordingS3Config, recordingEnabled, recordingTemplateBaseUrl };

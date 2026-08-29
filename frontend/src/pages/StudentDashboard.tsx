@@ -3,11 +3,13 @@ import { useNavigate } from "react-router-dom";
 import { apiRequest, ApiError } from "../lib/apiClient";
 import { formatIst } from "../lib/istTime";
 import { useAuth } from "../context/AuthContext";
-import type { ContentItem, ContentType, Course, Subscription, Meeting } from "../types";
+import type { ContentItem, ContentType, Course, Subscription, Meeting, Quiz } from "../types";
 import DashboardHeader from "../components/student/DashboardHeader";
 import StatCards from "../components/student/StatCards";
 import ContentTabs from "../components/student/ContentTabs";
 import ContentCard from "../components/content/ContentCard";
+import QuizCard from "../components/quiz/QuizCard";
+import QuizTakeModal from "../components/quiz/QuizTakeModal";
 import VideoPlayerModal from "../components/content/VideoPlayerModal";
 import PdfViewerModal from "../components/content/PdfViewerModal";
 import PostViewerModal from "../components/content/PostViewerModal";
@@ -23,8 +25,10 @@ import { StudentDashboardSkeletonShell } from "../components/common/PageSkeleton
 export default function StudentDashboard() {
   const { user } = useAuth();
   const navigate = useNavigate();
-  const [tab, setTab] = useState<ContentType | "ALL">("ALL");
+  const [tab, setTab] = useState<ContentType | "ALL" | "QUIZ">("ALL");
   const [items, setItems] = useState<ContentItem[] | null>(null);
+  const [quizzes, setQuizzes] = useState<Quiz[] | null>(null);
+  const [takingQuizId, setTakingQuizId] = useState<string | null>(null);
   const [upcoming, setUpcoming] = useState<ContentItem[] | null>(null);
   const [upcomingCourses, setUpcomingCourses] = useState<Course[] | null>(null);
   const [meetings, setMeetings] = useState<Meeting[] | null>(null);
@@ -58,16 +62,22 @@ export default function StudentDashboard() {
     }
     setUpcomingCoursesError(null);
     try {
+      // A quiz never has a ContentType, so the /content type filter is
+      // only meaningful for VIDEO/PDF/POST/ALL — on the Quizzes tab this
+      // just falls back to fetching the unfiltered feed (its result
+      // isn't rendered while that tab is active, see below).
+      const contentTypeQuery = tab !== "ALL" && tab !== "QUIZ" ? `?type=${tab}` : "";
       const results = await Promise.allSettled([
-        apiRequest<{ content: ContentItem[] }>(`/content${tab !== "ALL" ? `?type=${tab}` : ""}`),
+        apiRequest<{ content: ContentItem[] }>(`/content${contentTypeQuery}`),
         apiRequest<{ content: ContentItem[] }>("/content/upcoming"),
         apiRequest<{ courses: Course[] }>("/courses/upcoming"),
         apiRequest<{ meetings: Meeting[] }>("/meetings/upcoming"),
         apiRequest<{ subscription: Subscription | null }>("/me/plan"),
         apiRequest<{ overallPercent: number; total: number }>("/me/progress"),
+        apiRequest<{ quizzes: Quiz[] }>("/quizzes"),
       ]);
 
-      const [contentRes, upcomingRes, upcomingCoursesRes, meetingsRes, planRes, progressRes] = results;
+      const [contentRes, upcomingRes, upcomingCoursesRes, meetingsRes, planRes, progressRes, quizzesRes] = results;
       if (contentRes.status === "rejected") throw contentRes.reason;
       if (planRes.status === "rejected") throw planRes.reason;
       if (progressRes.status === "rejected") throw progressRes.reason;
@@ -91,6 +101,8 @@ export default function StudentDashboard() {
       }
       if (meetingsRes.status === "fulfilled") setMeetings(meetingsRes.value.meetings);
       else setMeetings([]);
+      if (quizzesRes.status === "fulfilled") setQuizzes(quizzesRes.value.quizzes);
+      else setQuizzes([]);
     } catch (err) {
       setError(err instanceof ApiError ? err.message : "Couldn't load your dashboard right now.");
     } finally {
@@ -258,24 +270,51 @@ export default function StudentDashboard() {
 
         <section className="mt-10">
           <div className="mb-5 flex flex-wrap items-center justify-between gap-4">
-            <h2 className="font-display text-lg font-semibold text-ink-950">Content</h2>
+            <h2 className="font-display text-lg font-semibold text-ink-950">{tab === "QUIZ" ? "Quizzes" : "Content"}</h2>
             <ContentTabs active={tab} onChange={setTab} />
           </div>
 
-          {items === null && !error && <CardGridSkeleton count={6} mediaClassName="h-40 w-full" />}
-          {error && <ErrorState message={error} onRetry={load} />}
-          {items && items.length === 0 && (
-            <EmptyState
-              title="Nothing here yet"
-              description={subscription ? "New content will show up here as it's published." : "Get a plan to unlock content."}
-            />
-          )}
-          {items && items.length > 0 && (
-            <div className="grid gap-5 sm:grid-cols-2 lg:grid-cols-3">
-              {items.map((item) => (
-                <ContentCard key={item.id} item={item} onOpen={openContent} />
-              ))}
-            </div>
+          {tab === "QUIZ" ? (
+            <>
+              {quizzes && quizzes.length > 0 && (
+                <p className="mb-4 text-sm font-medium text-ink-500">
+                  Quizzes: {quizzes.filter((q) => q.lastAttempt).length} / {quizzes.length} completed
+                </p>
+              )}
+              {quizzes === null && !error && <CardGridSkeleton count={6} mediaClassName="h-40 w-full" />}
+              {error && <ErrorState message={error} onRetry={load} />}
+              {quizzes && quizzes.length === 0 && (
+                <EmptyState
+                  title="No quizzes yet"
+                  description={subscription ? "Quizzes will show up here as they're published." : "Get a plan to unlock quizzes."}
+                />
+              )}
+              {quizzes && quizzes.length > 0 && (
+                <div className="grid gap-5 sm:grid-cols-2 lg:grid-cols-3">
+                  {quizzes.map((quiz) => (
+                    <QuizCard key={quiz.id} quiz={quiz} onStart={(q) => setTakingQuizId(q.id)} />
+                  ))}
+                </div>
+              )}
+            </>
+          ) : (
+            <>
+              {items === null && !error && <CardGridSkeleton count={6} mediaClassName="h-40 w-full" />}
+              {error && <ErrorState message={error} onRetry={load} />}
+              {items && items.length === 0 && (
+                <EmptyState
+                  title="Nothing here yet"
+                  description={subscription ? "New content will show up here as it's published." : "Get a plan to unlock content."}
+                />
+              )}
+              {items && items.length > 0 && (
+                <div className="grid gap-5 sm:grid-cols-2 lg:grid-cols-3">
+                  {items.map((item) => (
+                    <ContentCard key={item.id} item={item} onOpen={openContent} />
+                  ))}
+                </div>
+              )}
+            </>
           )}
         </section>
       </main>
@@ -287,6 +326,13 @@ export default function StudentDashboard() {
           items={items.filter((i) => i.type === "POST")}
           initialIndex={items.filter((i) => i.type === "POST").findIndex((i) => i.id === active.id)}
           onClose={closeAndRefresh}
+        />
+      )}
+      {takingQuizId && (
+        <QuizTakeModal
+          quizId={takingQuizId}
+          onClose={() => setTakingQuizId(null)}
+          onCompleted={() => load({ silent: true })}
         />
       )}
     </div>

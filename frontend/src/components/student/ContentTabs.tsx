@@ -1,18 +1,19 @@
 import type { ContentType } from "../../types";
 
-const TABS: { key: ContentType | "ALL"; label: string }[] = [
+const TABS: { key: ContentType | "ALL" | "QUIZ"; label: string }[] = [
   { key: "ALL", label: "All" },
   { key: "VIDEO", label: "Videos" },
   { key: "PDF", label: "PDFs" },
   { key: "POST", label: "Posts" },
+  { key: "QUIZ", label: "Quizzes" },
 ];
 
 export default function ContentTabs({
   active,
   onChange,
 }: {
-  active: ContentType | "ALL";
-  onChange: (tab: ContentType | "ALL") => void;
+  active: ContentType | "ALL" | "QUIZ";
+  onChange: (tab: ContentType | "ALL" | "QUIZ") => void;
 }) {
   return (
     <div role="tablist" aria-label="Content type" className="flex w-fit max-w-full overflow-x-auto rounded-full bg-ink-100 p-1 text-sm font-medium">

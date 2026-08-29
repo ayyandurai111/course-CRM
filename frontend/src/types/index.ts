@@ -76,6 +76,108 @@ export interface ContentItem {
   progress?: ContentProgressInfo;
 }
 
+// --- Quiz system -------------------------------------------------------
+
+export type QuizStatus = "DRAFT" | "PUBLISHED";
+export type QuizOptionLetter = "A" | "B" | "C" | "D";
+
+export interface Quiz {
+  id: string;
+  courseId: string;
+  course?: { id: string; title: string } | null;
+  title: string;
+  description?: string | null;
+  status: QuizStatus;
+  passPercent: number;
+  questionCount?: number;
+  createdAt: string;
+  updatedAt?: string;
+  // Student-facing extras (present on GET /quizzes for a student)
+  attemptsCount?: number;
+  bestPercent?: number | null;
+  lastAttempt?: { percent: number; passed: boolean; completedAt: string } | null;
+}
+
+// Admin/editing shape — includes the correct answer and explanation.
+export interface QuizQuestion {
+  id: string;
+  quizId: string;
+  questionText: string;
+  optionA: string;
+  optionB: string;
+  optionC: string;
+  optionD: string;
+  correctOption: QuizOptionLetter;
+  explanation?: string | null;
+  orderIndex: number;
+}
+
+// Student quiz-taking shape — never includes correctOption/explanation
+// until after the quiz has been submitted (see backend/src/routes/quizzes.routes.js).
+export interface StudentQuizQuestion {
+  id: string;
+  quizId: string;
+  questionText: string;
+  optionA: string;
+  optionB: string;
+  optionC: string;
+  optionD: string;
+  orderIndex: number;
+}
+
+// A single row from the DOCX import preview — same shape as
+// QuizQuestion, plus a tempId (no real id yet, nothing is saved) and
+// validity metadata the admin uses to fix "needs review" rows.
+export interface ImportedQuizQuestion {
+  tempId: string;
+  questionText: string;
+  optionA: string;
+  optionB: string;
+  optionC: string;
+  optionD: string;
+  correctOption: QuizOptionLetter | null;
+  explanation?: string;
+  valid: boolean;
+  issues: string[];
+}
+
+export interface QuizAttempt {
+  id: string;
+  quizId: string;
+  userId: string;
+  attemptNumber: number;
+  score: number;
+  totalQuestions: number;
+  percent: number;
+  passed: boolean;
+  startedAt: string;
+  completedAt?: string | null;
+  student?: { id: string; name: string; email: string } | null;
+}
+
+export interface QuizAnswerReview {
+  questionId: string;
+  questionText: string;
+  optionA: string;
+  optionB: string;
+  optionC: string;
+  optionD: string;
+  correctOption: QuizOptionLetter;
+  explanation?: string;
+  selectedOption: QuizOptionLetter | null;
+  isCorrect: boolean;
+}
+
+export interface QuizAttemptResult {
+  attemptId: string;
+  attemptNumber: number;
+  score: number;
+  totalQuestions: number;
+  percent: number;
+  passed: boolean;
+  answers: QuizAnswerReview[];
+}
+
 export interface Plan {
   id: string;
   name: string;

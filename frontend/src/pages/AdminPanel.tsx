@@ -5,6 +5,7 @@ import AdminSidebar, { AdminSection } from "../components/admin/AdminSidebar";
 import OverviewSection from "../components/admin/OverviewSection";
 import CoursesSection from "../components/admin/CoursesSection";
 import ContentSection from "../components/admin/ContentSection";
+import QuizzesSection from "../components/admin/QuizzesSection";
 import StudentsSection from "../components/admin/StudentsSection";
 import PlansSection from "../components/admin/PlansSection";
 import SiteContentSection from "../components/admin/SiteContentSection";
@@ -51,6 +52,7 @@ export default function AdminPanel() {
           {visited.has("overview") && <div hidden={section !== "overview"}><OverviewSection /></div>}
           {visited.has("courses") && <div hidden={section !== "courses"}><CoursesSection /></div>}
           {visited.has("content") && <div hidden={section !== "content"}><ContentSection /></div>}
+          {visited.has("quizzes") && <div hidden={section !== "quizzes"}><QuizzesSection /></div>}
           {visited.has("students") && <div hidden={section !== "students"}><StudentsSection /></div>}
           {visited.has("meetings") && <div hidden={section !== "meetings"}><MeetingsSection /></div>}
           {visited.has("plans") && <div hidden={section !== "plans"}><PlansSection /></div>}

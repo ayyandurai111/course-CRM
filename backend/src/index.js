@@ -26,6 +26,7 @@ const adminRoutes = require("./routes/admin.routes");
 const siteContentRoutes = require("./routes/siteContent.routes");
 const meetingRoutes = require("./routes/meetings.routes");
 const livekitWebhookRoutes = require("./routes/livekitWebhook.routes");
+const quizRoutes = require("./routes/quizzes.routes");
 
 const app = express();
 
@@ -212,6 +213,7 @@ app.use("/api/admin", adminRoutes);
 app.use("/api/site-content", siteContentRoutes);
 app.use("/api/meetings", meetingRoutes);
 app.use("/api/livekit/webhook", livekitWebhookRoutes);
+app.use("/api/quizzes", quizRoutes);
 
 // ---------------------------------------------------------------------------
 // Serve the built frontend so the whole app runs behind a single URL/port.

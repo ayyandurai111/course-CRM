@@ -325,6 +325,13 @@ router.get("/:id/token", authenticate, async (req, res, next) => {
     const token = new AccessToken(apiKey, apiSecret, {
       identity: req.user.id,
       name: req.user.name,
+      // Carried into livekit-client's `participant.metadata` for every
+      // other participant in the room, purely so tiles can show a real
+      // profile photo instead of initials when someone's camera is off
+      // (matches Google Meet's behavior). req.user.avatarUrl is already
+      // validated as an allow-listed HTTPS image URL wherever it's set
+      // (see auth.js / me.routes.js), so no new validation needed here.
+      metadata: JSON.stringify({ avatarUrl: req.user.avatarUrl || null }),
       ttl: "2h",
     });
     token.addGrant({ roomJoin: true, room: meeting.roomName, canPublish: true, canSubscribe: true, canPublishData: true });

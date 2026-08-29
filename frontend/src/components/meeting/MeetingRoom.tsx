@@ -1,8 +1,14 @@
 import { useEffect, useMemo, useRef, useState } from "react";
-import { Room, RoomEvent, type RemoteParticipant } from "livekit-client";
+import { Room, RoomEvent, Track, type Participant, type RemoteParticipant } from "livekit-client";
 import ParticipantTile, { participantHasMedia } from "./ParticipantTile";
 import { apiRequest, ApiError } from "../../lib/apiClient";
-import { MicIcon, MicOffIcon, VideoIcon, VideoOffIcon, MonitorIcon, MessageCircleIcon, LogOutIcon, UserXIcon, UsersIcon, XIcon } from "../common/Icons";
+import {
+  MicIcon, MicOffIcon, VideoIcon, VideoOffIcon, MonitorIcon, MessageCircleIcon,
+  // MicIcon doubles as the icon-only "speaking now" badge on tiles below —
+  // deliberately no text label per the design ask (icon + colour only).
+  UserXIcon, UsersIcon, XIcon, ArrowLeftIcon, ShieldIcon, MoreVerticalIcon,
+  HandIcon, SearchIcon, SendIcon, PhoneOffIcon, SignalIcon,
+} from "../common/Icons";
 
 export interface MeetingInfo {
   id: string;
@@ -11,6 +17,8 @@ export interface MeetingInfo {
   roomName: string;
   status: "SCHEDULED" | "LIVE" | "ENDED" | "CANCELLED";
   scheduledAt: string;
+  startedAt?: string | null;
+  recordingStatus?: "NONE" | "RECORDING" | "PROCESSING" | "READY" | "FAILED";
   course?: { id: string; title: string } | null;
 }
 
@@ -79,6 +87,42 @@ export default function MeetingRoom({ token, wsUrl, meeting, onLeave, isAdmin }:
   const [error, setError] = useState<string | null>(null);
   const [moderationBusy, setModerationBusy] = useState<string | null>(null);
 
+  // --- Presentation-only UI state below. None of this touches media,
+  // connection, or chat/moderation logic — it only controls what's
+  // shown on screen (which sidebar tab, a purely visual "raise hand"
+  // flag, and a couple of static info popovers), matching the new
+  // meeting UI layout.
+  const [handRaised, setHandRaised] = useState(false);
+  const [sidebarTab, setSidebarTab] = useState<"participants" | "chat">("chat");
+  const [participantSearch, setParticipantSearch] = useState("");
+  const [showMoreMenu, setShowMoreMenu] = useState(false);
+  const [showSecurityInfo, setShowSecurityInfo] = useState(false);
+
+  // Real recording state — driven by meeting.recordingStatus, which the
+  // backend already sets when LiveKit Egress actually starts/stops (see
+  // meetingRecordingService.js). Not a UI-only flag: if the deployment
+  // has no egress configured, recordingStatus stays "NONE"/undefined and
+  // this indicator simply never shows.
+  const isRecording = meeting.recordingStatus === "RECORDING";
+  const [recordingSeconds, setRecordingSeconds] = useState(0);
+
+  useEffect(() => {
+    if (!isRecording) return;
+    const startedAtMs = meeting.startedAt ? new Date(meeting.startedAt).getTime() : Date.now();
+    const tick = () => setRecordingSeconds(Math.max(0, Math.floor((Date.now() - startedAtMs) / 1000)));
+    tick();
+    const interval = window.setInterval(tick, 1000);
+    return () => window.clearInterval(interval);
+  }, [isRecording, meeting.startedAt]);
+
+  function formatRecordingTime(totalSeconds: number) {
+    const h = Math.floor(totalSeconds / 3600);
+    const m = Math.floor((totalSeconds % 3600) / 60);
+    const s = totalSeconds % 60;
+    const pad = (n: number) => String(n).padStart(2, "0");
+    return h > 0 ? `${h}:${pad(m)}:${pad(s)}` : `${pad(m)}:${pad(s)}`;
+  }
+
   useEffect(() => {
     let active = true;
     const room = new Room({ adaptiveStream: true, dynacast: true });
@@ -97,6 +141,12 @@ export default function MeetingRoom({ token, wsUrl, meeting, onLeave, isAdmin }:
 
     room.on(RoomEvent.TrackSubscribed, rerender);
     room.on(RoomEvent.TrackUnsubscribed, rerender);
+    // Drives the speaking-highlight ring/icon on tiles below — LiveKit
+    // already computes who's actively talking from real audio levels
+    // (not just "mic unmuted") and fires this whenever that set changes,
+    // so each participant's own `.isSpeaking` stays accurate without us
+    // polling anything.
+    room.on(RoomEvent.ActiveSpeakersChanged, rerender);
     // Bug fix: the "Remove" moderation button used to render the
     // instant a participant showed up in the list — before their
     // camera/mic track had actually been subscribed and drawn — so
@@ -197,11 +247,42 @@ export default function MeetingRoom({ token, wsUrl, meeting, onLeave, isAdmin }:
     };
   }, [token, wsUrl, meeting.id]);
 
-  const participants = useMemo(() => {
+  const participants = useMemo<Participant[]>(() => {
     const room = roomRef.current;
     if (!room) return [];
     return [room.localParticipant, ...Array.from(room.remoteParticipants.values())];
   }, [refresh, connected]);
+
+  // Presentation-only: which existing participant (from the array above)
+  // gets the large "spotlight" tile vs. the filmstrip. Prefers whoever is
+  // screen-sharing, then falls back to the first participant with a
+  // camera on, then just the first participant. Purely a display choice
+  // over data that already exists — doesn't change what's subscribed to.
+  const spotlightParticipant = useMemo(() => {
+    if (participants.length === 0) return null;
+    const sharing = participants.find((p) =>
+      Array.from(p.videoTrackPublications.values()).some((pub) => !!pub.track && pub.track.source === Track.Source.ScreenShare)
+    );
+    if (sharing) return sharing;
+    const withVideo = participants.find((p) => Array.from(p.videoTrackPublications.values()).some((pub) => !!pub.track));
+    return withVideo || participants[0];
+  }, [participants]);
+
+  const filmstripParticipants = participants.filter((p) => p !== spotlightParticipant);
+
+  function isMicMuted(participant: { audioTrackPublications: Map<string, { track?: unknown; isMuted?: boolean }> }) {
+    const pubs = Array.from(participant.audioTrackPublications.values());
+    if (pubs.length === 0) return true;
+    return pubs.every((p) => !p.track || p.isMuted);
+  }
+
+  function initials(name: string) {
+    return name.trim().slice(0, 2).toUpperCase() || "?";
+  }
+
+  const filteredParticipantList = participants.filter((p) =>
+    (p.name || p.identity).toLowerCase().includes(participantSearch.trim().toLowerCase())
+  );
 
   async function toggleMic() {
     const room = roomRef.current;
@@ -295,24 +376,77 @@ export default function MeetingRoom({ token, wsUrl, meeting, onLeave, isAdmin }:
     <div className="flex-1 space-y-3 overflow-y-auto">
       {messages.length === 0 && <p className="text-sm text-white/40">No messages yet.</p>}
       {messages.map((m) => (
-        <div key={m.id} className={m.own ? "text-right" : "text-left"}>
-          <p className="text-[10px] text-white/40">{m.sender}</p>
-          <p className={`mt-1 inline-block max-w-[90%] rounded-2xl px-3 py-2 text-sm ${m.own ? "bg-white text-ink-950" : "bg-white/10"}`}>{m.text}</p>
+        <div key={m.id} className="flex items-start gap-2">
+          <div className="mt-0.5 flex h-7 w-7 shrink-0 items-center justify-center rounded-full bg-white/10 text-[10px] font-semibold text-white/70">
+            {initials(m.sender)}
+          </div>
+          <div className="min-w-0">
+            <p className="text-xs font-medium text-white/70">{m.sender}{m.own ? " (You)" : ""}</p>
+            <p className={`mt-1 inline-block max-w-full break-words rounded-2xl rounded-tl-sm px-3 py-2 text-sm ${m.own ? "bg-amber-500 text-ink-950" : "bg-white/10 text-white"}`}>
+              {m.text}
+            </p>
+          </div>
         </div>
       ))}
     </div>
   );
 
   const chatComposer = (
-    <div className="mt-3 flex gap-2">
+    <div className="mt-3 flex items-center gap-2">
       <input
         value={chatInput}
         onChange={(e) => setChatInput(e.target.value)}
         onKeyDown={(e) => { if (e.key === "Enter") void sendChat(); }}
-        placeholder="Type a message"
-        className="min-w-0 flex-1 rounded-full border border-white/10 bg-white/10 px-3 py-2 text-sm text-white outline-none placeholder:text-white/30"
+        placeholder="Type a message…"
+        className="min-w-0 flex-1 rounded-full border border-white/10 bg-white/10 px-4 py-2.5 text-sm text-white outline-none placeholder:text-white/30"
       />
-      <button onClick={() => void sendChat()} className="rounded-full bg-white px-4 py-2 text-sm font-semibold text-ink-950">Send</button>
+      <button
+        onClick={() => void sendChat()}
+        aria-label="Send message"
+        className="flex h-9 w-9 shrink-0 items-center justify-center rounded-full bg-amber-500 text-ink-950 transition hover:bg-amber-400"
+      >
+        <SendIcon className="h-4 w-4" />
+      </button>
+    </div>
+  );
+
+  const participantsList = (
+    <div className="flex flex-1 flex-col overflow-hidden">
+      <div className="relative mb-3 shrink-0">
+        <SearchIcon className="pointer-events-none absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-white/30" />
+        <input
+          value={participantSearch}
+          onChange={(e) => setParticipantSearch(e.target.value)}
+          placeholder="Search participants"
+          className="w-full rounded-full border border-white/10 bg-white/10 py-2 pl-9 pr-3 text-sm text-white outline-none placeholder:text-white/30"
+        />
+      </div>
+      <div className="flex-1 space-y-1 overflow-y-auto">
+        {filteredParticipantList.length === 0 && <p className="text-sm text-white/40">No participants found.</p>}
+        {filteredParticipantList.map((p) => (
+          <div key={p.identity} className="flex items-center gap-2.5 rounded-xl px-2 py-2 hover:bg-white/5">
+            <div className="flex h-8 w-8 shrink-0 items-center justify-center rounded-full bg-white/10 text-xs font-semibold text-white/80">
+              {initials(p.name || p.identity)}
+            </div>
+            <div className="min-w-0 flex-1">
+              <p className="truncate text-sm text-white">{p.name || p.identity}{p.isLocal ? " (You)" : ""}</p>
+              {isAdmin && p.isLocal && <p className="text-[11px] text-amber-400">Host</p>}
+            </div>
+            {isMicMuted(p) ? <MicOffIcon className="h-4 w-4 shrink-0 text-red-400" /> : <MicIcon className="h-4 w-4 shrink-0 text-emerald-400" />}
+            {isAdmin && !p.isLocal &&
+              (participantHasMedia(p) || Date.now() - (joinTimesRef.current.get(p.identity) ?? 0) > PARTICIPANT_REMOVE_GRACE_MS) && (
+              <button
+                disabled={moderationBusy === p.identity}
+                onClick={() => removeParticipant(p.identity)}
+                aria-label={`Remove ${p.name || p.identity}`}
+                className="shrink-0 rounded-full p-1.5 text-white/40 hover:bg-white/10 hover:text-white disabled:opacity-50"
+              >
+                <MoreVerticalIcon className="h-4 w-4" />
+              </button>
+            )}
+          </div>
+        ))}
+      </div>
     </div>
   );
 
@@ -328,129 +462,311 @@ export default function MeetingRoom({ token, wsUrl, meeting, onLeave, isAdmin }:
     );
   }
 
+  const scheduledTime = (() => {
+    try {
+      return new Date(meeting.scheduledAt).toLocaleTimeString([], { hour: "numeric", minute: "2-digit" });
+    } catch { return null; }
+  })();
+
+  const sidebarPanel = (
+    <>
+      <div className="mb-3 flex shrink-0 items-center justify-between">
+        <h2 className="font-display font-semibold">{sidebarTab === "participants" ? `Participants (${participants.length})` : "Live Chat"}</h2>
+        <div className="flex items-center gap-1 rounded-full bg-white/5 p-1">
+          <button
+            onClick={() => setSidebarTab("participants")}
+            className={`rounded-full p-1.5 transition ${sidebarTab === "participants" ? "bg-amber-500 text-ink-950" : "text-white/50 hover:text-white"}`}
+            aria-label="Show participants"
+          >
+            <UsersIcon className="h-4 w-4" />
+          </button>
+          <button
+            onClick={() => setSidebarTab("chat")}
+            className={`rounded-full p-1.5 transition ${sidebarTab === "chat" ? "bg-amber-500 text-ink-950" : "text-white/50 hover:text-white"}`}
+            aria-label="Show chat"
+          >
+            <MessageCircleIcon className="h-4 w-4" />
+          </button>
+        </div>
+      </div>
+      {sidebarTab === "participants" ? participantsList : <>{chatMessages}{chatComposer}</>}
+    </>
+  );
+
   return (
     <div className="flex min-h-screen flex-col bg-ink-950 text-white">
-      <header className="flex items-center justify-between border-b border-white/10 px-4 py-3 sm:px-6">
-        <div className="min-w-0"><p className="truncate font-display font-semibold">{meeting.title}</p><p className="truncate text-xs text-white/50">{meeting.course?.title || "Live class"}</p></div>
-        <div className="flex items-center gap-2">
-          {reconnecting ? (
-            <span className="flex items-center gap-1.5 rounded-full bg-amber-500/15 px-3 py-1 text-[11px] font-semibold uppercase tracking-wide text-amber-300">
-              <span className="h-1.5 w-1.5 animate-pulse rounded-full bg-amber-400" />
-              Reconnecting…
+      {/* Screen-recording-style indicator: a floating pill fixed to the
+          top-center of the screen with a pulsing red dot and a live
+          mm:ss timer, the same visual language as macOS/Zoom's "this is
+          being recorded" overlay. Only rendered when the meeting is
+          actually being recorded server-side. */}
+      {isRecording && (
+        <div className="pointer-events-none fixed left-1/2 top-3 z-50 -translate-x-1/2">
+          <div className="flex items-center gap-2 rounded-full bg-black/70 px-3.5 py-1.5 text-xs font-semibold text-white shadow-lg backdrop-blur">
+            <span className="relative flex h-2.5 w-2.5">
+              <span className="absolute inline-flex h-full w-full animate-ping rounded-full bg-red-500 opacity-75" />
+              <span className="relative inline-flex h-2.5 w-2.5 rounded-full bg-red-500" />
             </span>
-          ) : (
-            <span className="flex items-center gap-1.5 rounded-full bg-red-500/15 px-3 py-1 text-[11px] font-semibold uppercase tracking-wide text-red-300">
-              <span className="h-1.5 w-1.5 rounded-full bg-red-400" />
-              Live
-            </span>
-          )}
-          <button
-            onClick={() => setChatOpen((v) => !v)}
-            aria-pressed={chatOpen}
-            className={`flex items-center gap-1.5 rounded-full px-3 py-2 text-xs font-semibold transition ${chatOpen ? "bg-amber-500 text-ink-950" : "bg-white/10 text-white hover:bg-white/15"}`}
-          >
-            <MessageCircleIcon className="h-4 w-4" /> Chat
+            <span className="tracking-wide">REC</span>
+            <span className="tabular-nums text-white/70">{formatRecordingTime(recordingSeconds)}</span>
+          </div>
+        </div>
+      )}
+
+      <header className="relative flex items-center justify-between gap-3 border-b border-white/10 px-4 py-3 sm:px-6">
+        <div className="flex min-w-0 items-center gap-3">
+          <button onClick={leave} aria-label="Back" className="shrink-0 rounded-full p-2 text-white/70 transition hover:bg-white/10 hover:text-white">
+            <ArrowLeftIcon className="h-5 w-5" />
           </button>
-          <span className="hidden items-center gap-1.5 rounded-full bg-white/10 px-3 py-2 text-xs font-medium text-white sm:flex">
+          <div className="min-w-0">
+            <p className="truncate font-display font-semibold">{meeting.title}</p>
+            <div className="flex items-center gap-2">
+              <p className="truncate text-xs text-white/50">{scheduledTime ? `${scheduledTime} · ` : ""}{meeting.course?.title || "Live class"}</p>
+              {reconnecting ? (
+                <span className="flex shrink-0 items-center gap-1.5 rounded-full bg-amber-500/15 px-2 py-0.5 text-[10px] font-semibold uppercase tracking-wide text-amber-300">
+                  <span className="h-1.5 w-1.5 animate-pulse rounded-full bg-amber-400" /> Reconnecting
+                </span>
+              ) : (
+                <span className="flex shrink-0 items-center gap-1.5 rounded-full bg-red-500/15 px-2 py-0.5 text-[10px] font-semibold uppercase tracking-wide text-red-300">
+                  <span className="h-1.5 w-1.5 rounded-full bg-red-400" /> Live
+                </span>
+              )}
+              {isRecording && (
+                <span className="flex shrink-0 items-center gap-1.5 rounded-full bg-white/10 px-2 py-0.5 text-[10px] font-semibold uppercase tracking-wide text-white/70">
+                  <span className="h-1.5 w-1.5 rounded-full bg-red-500" /> Recording
+                </span>
+              )}
+            </div>
+          </div>
+        </div>
+
+        <div className="flex shrink-0 items-center gap-2">
+          <button
+            onClick={() => { setChatOpen(true); setSidebarTab("participants"); }}
+            className="hidden items-center gap-1.5 rounded-full bg-white/10 px-3 py-2 text-xs font-medium text-white transition hover:bg-white/15 sm:flex"
+          >
             <UsersIcon className="h-4 w-4" /> {participants.length}
-          </span>
+          </button>
+          <div className="relative">
+            <button
+              onClick={() => { setShowSecurityInfo((v) => !v); setShowMoreMenu(false); }}
+              aria-label="Meeting security info"
+              className="rounded-full p-2.5 text-white/70 transition hover:bg-white/10 hover:text-white"
+            >
+              <ShieldIcon className="h-4 w-4" />
+            </button>
+            {showSecurityInfo && (
+              <div className="absolute right-0 top-full z-30 mt-2 w-64 rounded-xl border border-white/10 bg-ink-900 p-3 text-xs text-white/70 shadow-2xl">
+                This meeting is encrypted in transit. Only invited participants for this course can join.
+              </div>
+            )}
+          </div>
+          <div className="relative">
+            <button
+              onClick={() => { setShowMoreMenu((v) => !v); setShowSecurityInfo(false); }}
+              aria-label="More options"
+              className="rounded-full p-2.5 text-white/70 transition hover:bg-white/10 hover:text-white"
+            >
+              <MoreVerticalIcon className="h-4 w-4" />
+            </button>
+            {showMoreMenu && (
+              <div className="absolute right-0 top-full z-30 mt-2 w-56 rounded-xl border border-white/10 bg-ink-900 p-1 text-sm shadow-2xl">
+                <button
+                  onClick={() => { navigator.clipboard?.writeText(window.location.href); setShowMoreMenu(false); }}
+                  className="block w-full rounded-lg px-3 py-2 text-left text-white/80 hover:bg-white/10"
+                >
+                  Copy meeting link
+                </button>
+                {meeting.description && (
+                  <p className="border-t border-white/10 px-3 py-2 text-xs text-white/40">{meeting.description}</p>
+                )}
+              </div>
+            )}
+          </div>
+          <button onClick={leave} className="rounded-full bg-red-600 px-4 py-2 text-sm font-semibold text-white transition hover:bg-red-500">
+            Leave Meeting
+          </button>
         </div>
       </header>
 
       <main className="flex min-h-0 flex-1 gap-3 p-3 sm:p-5">
-        {/* Bug fix: a single participant used to sit in a `grid h-fit` row
-            with no defined height, so the video element (w-full h-full)
-            couldn't compute a real height, fell back to its tiny intrinsic
-            size, got stretched full-width, and object-cover cropped that
-            into an extreme zoomed sliver. Single participant now fills the
-            actual available height with flex; multiple participants keep
-            the grid but each tile gets a fixed aspect-video box so the
-            video always has real, predictable dimensions to fill. */}
-        <div
-          className={`mx-auto flex min-h-0 w-full max-w-7xl flex-1 gap-3 ${
-            participants.length === 1 ? "flex-col" : "grid h-fit content-start sm:grid-cols-2 lg:grid-cols-3"
-          }`}
-        >
-          {participants.map((participant) => (
+        <div className="mx-auto flex min-h-0 w-full max-w-6xl flex-1 flex-col gap-3">
+          {/* Spotlight tile */}
+          {spotlightParticipant && (
             <div
-              key={participant.identity}
-              className={`relative overflow-hidden rounded-2xl bg-ink-950 shadow-card ${
-                participants.length === 1 ? "min-h-0 flex-1" : "aspect-video"
+              className={`relative min-h-0 flex-1 overflow-hidden rounded-2xl bg-ink-950 shadow-card transition-shadow duration-150 ${
+                spotlightParticipant.isSpeaking ? "ring-2 ring-emerald-400 ring-offset-2 ring-offset-ink-950" : ""
               }`}
             >
-              <ParticipantTile participant={participant} refresh={refresh} />
-              {isAdmin && !participant.isLocal &&
-                (participantHasMedia(participant) || Date.now() - (joinTimesRef.current.get(participant.identity) ?? 0) > PARTICIPANT_REMOVE_GRACE_MS) && (
+              <ParticipantTile participant={spotlightParticipant} refresh={refresh} />
+              <div className="absolute left-3 top-3 flex items-center gap-2">
+                {isAdmin && spotlightParticipant.isLocal && (
+                  <span className="rounded-full bg-amber-500 px-2.5 py-1 text-[11px] font-semibold text-ink-950">Teacher</span>
+                )}
+                {spotlightParticipant.isSpeaking && (
+                  <span
+                    aria-label="Speaking"
+                    className="flex h-7 w-7 items-center justify-center rounded-full bg-emerald-500 text-white shadow-lg ring-4 ring-emerald-500/30 animate-pulse"
+                  >
+                    <MicIcon className="h-3.5 w-3.5" />
+                  </span>
+                )}
+              </div>
+              <div className="absolute right-3 top-3 flex h-8 w-8 items-center justify-center rounded-full bg-black/50 text-emerald-400">
+                <SignalIcon className="h-4 w-4" />
+              </div>
+              {isAdmin && !spotlightParticipant.isLocal &&
+                (participantHasMedia(spotlightParticipant) || Date.now() - (joinTimesRef.current.get(spotlightParticipant.identity) ?? 0) > PARTICIPANT_REMOVE_GRACE_MS) && (
                 <button
-                  disabled={moderationBusy === participant.identity}
-                  onClick={() => removeParticipant(participant.identity)}
-                  className="absolute right-3 top-3 flex items-center gap-1.5 rounded-full bg-black/60 px-3 py-1.5 text-xs font-semibold text-white backdrop-blur transition hover:bg-red-600 disabled:opacity-50"
+                  disabled={moderationBusy === spotlightParticipant.identity}
+                  onClick={() => removeParticipant(spotlightParticipant.identity)}
+                  className="absolute bottom-3 right-3 flex items-center gap-1.5 rounded-full bg-black/60 px-3 py-1.5 text-xs font-semibold text-white backdrop-blur transition hover:bg-red-600 disabled:opacity-50"
                 >
-                  <UserXIcon className="h-3.5 w-3.5" /> {moderationBusy === participant.identity ? "Removing…" : "Remove"}
+                  <UserXIcon className="h-3.5 w-3.5" /> {moderationBusy === spotlightParticipant.identity ? "Removing…" : "Remove"}
                 </button>
               )}
             </div>
-          ))}
+          )}
           {!connected && <p className="py-10 text-center text-sm text-white/60">Connecting to the live class…</p>}
+
+          {/* Filmstrip of everyone else */}
+          {filmstripParticipants.length > 0 && (
+            <div className="flex shrink-0 gap-3 overflow-x-auto pb-1">
+              {filmstripParticipants.map((participant) => (
+                <div
+                  key={participant.identity}
+                  className={`relative aspect-video w-32 shrink-0 overflow-hidden rounded-xl bg-ink-950 shadow-card transition-shadow duration-150 sm:w-40 ${
+                    participant.isSpeaking ? "ring-2 ring-emerald-400 ring-offset-2 ring-offset-ink-950" : ""
+                  }`}
+                >
+                  <ParticipantTile participant={participant} refresh={refresh} />
+                  {participant.isSpeaking ? (
+                    <div
+                      aria-label="Speaking"
+                      className="absolute right-2 top-2 flex h-5 w-5 items-center justify-center rounded-full bg-emerald-500 text-white shadow ring-2 ring-emerald-500/30 animate-pulse"
+                    >
+                      <MicIcon className="h-3 w-3" />
+                    </div>
+                  ) : isMicMuted(participant) && (
+                    <div className="absolute right-2 top-2 flex h-5 w-5 items-center justify-center rounded-full bg-red-600 text-white">
+                      <MicOffIcon className="h-3 w-3" />
+                    </div>
+                  )}
+                  {isAdmin && !participant.isLocal &&
+                    (participantHasMedia(participant) || Date.now() - (joinTimesRef.current.get(participant.identity) ?? 0) > PARTICIPANT_REMOVE_GRACE_MS) && (
+                    <button
+                      disabled={moderationBusy === participant.identity}
+                      onClick={() => removeParticipant(participant.identity)}
+                      aria-label="Remove participant"
+                      className="absolute bottom-2 right-2 flex h-6 w-6 items-center justify-center rounded-full bg-black/60 text-white backdrop-blur transition hover:bg-red-600 disabled:opacity-50"
+                    >
+                      <UserXIcon className="h-3 w-3" />
+                    </button>
+                  )}
+                </div>
+              ))}
+            </div>
+          )}
         </div>
 
         {chatOpen && (
           <>
             {/* Mobile/tablet: bottom sheet, overlaid on top of the video grid */}
-            <div className="fixed inset-0 z-40 md:hidden" role="dialog" aria-modal="true" aria-label="Chat">
+            <div className="fixed inset-0 z-40 md:hidden" role="dialog" aria-modal="true" aria-label="Meeting sidebar">
               <div className="absolute inset-0 bg-black/60" onClick={() => setChatOpen(false)} />
               <div className="absolute inset-x-0 bottom-0 flex max-h-[75vh] flex-col rounded-t-2xl border-t border-white/10 bg-ink-950 p-4 shadow-2xl">
                 <div className="mx-auto mb-2 h-1 w-10 shrink-0 rounded-full bg-white/20" />
-                <div className="mb-3 flex shrink-0 items-center justify-between">
-                  <h2 className="font-semibold">Chat</h2>
-                  <button onClick={() => setChatOpen(false)} aria-label="Close chat" className="rounded-full p-1.5 text-white/60 hover:bg-white/10">
-                    <XIcon className="h-4 w-4" />
-                  </button>
+                <button onClick={() => setChatOpen(false)} aria-label="Close" className="absolute right-3 top-3 rounded-full p-1.5 text-white/60 hover:bg-white/10">
+                  <XIcon className="h-4 w-4" />
+                </button>
+                {sidebarPanel}
+              </div>
+            </div>
+
+            {/* Tablet-landscape/desktop: persistent sidebar with both panels */}
+            <aside className="hidden w-80 flex-col gap-3 md:flex">
+              <div className="flex max-h-64 flex-col rounded-2xl border border-white/10 bg-white/5 p-4">
+                <div className="mb-3 flex items-center justify-between">
+                  <h2 className="font-display font-semibold">Participants ({participants.length})</h2>
+                </div>
+                {participantsList}
+              </div>
+              <div className="flex min-h-0 flex-1 flex-col rounded-2xl border border-white/10 bg-white/5 p-4">
+                <div className="mb-3 flex items-center justify-between">
+                  <h2 className="font-display font-semibold">Live Chat</h2>
                 </div>
                 {chatMessages}
                 {chatComposer}
               </div>
-            </div>
-
-            {/* Tablet-landscape/desktop: persistent sidebar */}
-            <aside className="hidden w-80 flex-col rounded-2xl border border-white/10 bg-white/5 p-4 md:flex">
-              <div className="mb-3 flex items-center justify-between"><h2 className="font-semibold">Chat</h2><span className="text-xs text-white/40">Live</span></div>
-              {chatMessages}
-              {chatComposer}
             </aside>
           </>
         )}
       </main>
 
       <footer className="sticky bottom-0 border-t border-white/10 bg-ink-950/95 px-3 py-4 backdrop-blur sm:px-6">
-        <div className="mx-auto flex max-w-3xl flex-wrap items-center justify-center gap-2 sm:gap-3">
+        <div className="mx-auto flex max-w-4xl flex-wrap items-center justify-center gap-2 sm:gap-3">
           <button
             onClick={toggleMic}
             aria-pressed={micOn}
-            className={`flex items-center gap-2 rounded-full px-4 py-3 text-sm font-semibold transition ${micOn ? "bg-white/10 text-white hover:bg-white/15" : "bg-red-600 text-white hover:bg-red-500"}`}
+            className={`flex flex-col items-center gap-1 rounded-2xl px-4 py-2.5 text-[11px] font-medium transition ${micOn ? "bg-white/10 text-white hover:bg-white/15" : "bg-red-600 text-white hover:bg-red-500"}`}
           >
-            {micOn ? <MicIcon className="h-4 w-4" /> : <MicOffIcon className="h-4 w-4" />}
-            <span className="hidden sm:inline">{micOn ? "Mute" : "Unmute"}</span>
+            {micOn ? <MicIcon className="h-5 w-5" /> : <MicOffIcon className="h-5 w-5" />}
+            {micOn ? "Mute" : "Unmute"}
           </button>
           <button
             onClick={toggleCamera}
             aria-pressed={cameraOn}
-            className={`flex items-center gap-2 rounded-full px-4 py-3 text-sm font-semibold transition ${cameraOn ? "bg-white/10 text-white hover:bg-white/15" : "bg-red-600 text-white hover:bg-red-500"}`}
+            className={`flex flex-col items-center gap-1 rounded-2xl px-4 py-2.5 text-[11px] font-medium transition ${cameraOn ? "bg-white/10 text-white hover:bg-white/15" : "bg-red-600 text-white hover:bg-red-500"}`}
           >
-            {cameraOn ? <VideoIcon className="h-4 w-4" /> : <VideoOffIcon className="h-4 w-4" />}
-            <span className="hidden sm:inline">{cameraOn ? "Camera off" : "Camera on"}</span>
+            {cameraOn ? <VideoIcon className="h-5 w-5" /> : <VideoOffIcon className="h-5 w-5" />}
+            {cameraOn ? "Stop Video" : "Start Video"}
           </button>
           <button
             onClick={toggleScreen}
             aria-pressed={screenOn}
-            className={`flex items-center gap-2 rounded-full px-4 py-3 text-sm font-semibold transition ${screenOn ? "bg-amber-500 text-ink-950 hover:bg-amber-400" : "bg-white/10 text-white hover:bg-white/15"}`}
+            className={`flex flex-col items-center gap-1 rounded-2xl px-4 py-2.5 text-[11px] font-medium transition ${screenOn ? "bg-amber-500 text-ink-950 hover:bg-amber-400" : "bg-white/10 text-white hover:bg-white/15"}`}
           >
-            <MonitorIcon className="h-4 w-4" />
-            <span className="hidden sm:inline">{screenOn ? "Stop share" : "Share screen"}</span>
+            <MonitorIcon className="h-5 w-5" />
+            {screenOn ? "Stop share" : "Share Screen"}
           </button>
-          <button onClick={leave} className="flex items-center gap-2 rounded-full bg-red-600 px-4 py-3 text-sm font-semibold text-white transition hover:bg-red-500">
-            <LogOutIcon className="h-4 w-4" />
-            <span className="hidden sm:inline">Leave</span>
+          <button
+            onClick={() => setHandRaised((v) => !v)}
+            aria-pressed={handRaised}
+            className={`flex flex-col items-center gap-1 rounded-2xl px-4 py-2.5 text-[11px] font-medium transition ${handRaised ? "bg-amber-500 text-ink-950 hover:bg-amber-400" : "bg-white/10 text-white hover:bg-white/15"}`}
+          >
+            <HandIcon className="h-5 w-5" />
+            Raise Hand
+          </button>
+          <button
+            onClick={() => { setChatOpen((v) => !(v && sidebarTab === "chat")); setSidebarTab("chat"); }}
+            aria-pressed={chatOpen && sidebarTab === "chat"}
+            className={`relative flex flex-col items-center gap-1 rounded-2xl px-4 py-2.5 text-[11px] font-medium transition ${chatOpen && sidebarTab === "chat" ? "bg-amber-500 text-ink-950" : "bg-white/10 text-white hover:bg-white/15"}`}
+          >
+            <MessageCircleIcon className="h-5 w-5" />
+            Chat
+          </button>
+          <button
+            onClick={() => { setChatOpen((v) => !(v && sidebarTab === "participants")); setSidebarTab("participants"); }}
+            aria-pressed={chatOpen && sidebarTab === "participants"}
+            className={`relative flex flex-col items-center gap-1 rounded-2xl px-4 py-2.5 text-[11px] font-medium transition ${chatOpen && sidebarTab === "participants" ? "bg-amber-500 text-ink-950" : "bg-white/10 text-white hover:bg-white/15"}`}
+          >
+            <span className="relative">
+              <UsersIcon className="h-5 w-5" />
+              <span className="absolute -right-2 -top-1.5 rounded-full bg-amber-500 px-1 text-[9px] font-bold text-ink-950">{participants.length}</span>
+            </span>
+            Participants
+          </button>
+          <div className="relative">
+            <button
+              onClick={() => setShowMoreMenu((v) => !v)}
+              className="flex flex-col items-center gap-1 rounded-2xl bg-white/10 px-4 py-2.5 text-[11px] font-medium text-white transition hover:bg-white/15"
+            >
+              <MoreVerticalIcon className="h-5 w-5" />
+              More
+            </button>
+          </div>
+          <button onClick={leave} aria-label="Leave meeting" className="flex h-12 w-12 items-center justify-center rounded-full bg-red-600 text-white transition hover:bg-red-500">
+            <PhoneOffIcon className="h-5 w-5" />
           </button>
           {isAdmin && <span className="ml-2 hidden rounded-full bg-amber-500/15 px-2.5 py-1 text-[11px] font-semibold uppercase tracking-wide text-amber-300 sm:inline">Host</span>}
         </div>

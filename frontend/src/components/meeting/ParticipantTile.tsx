@@ -1,4 +1,4 @@
-import { useEffect, useRef } from "react";
+import { useEffect, useRef, useState } from "react";
 import { Track, type Participant } from "livekit-client";
 
 // Bug fix: a participant can have BOTH a camera track and a screen-share
@@ -44,9 +44,26 @@ function initials(name: string) {
   return name.trim().slice(0, 2).toUpperCase() || "?";
 }
 
+/** Safely reads the profile photo URL carried in the LiveKit token's
+ * metadata (see backend/src/routes/meetings.routes.js) so a tile can
+ * show a real profile picture instead of bare initials when someone's
+ * camera is off — the way Google Meet does it. Metadata is
+ * participant-supplied-at-connect-time JSON, so this never trusts it
+ * beyond reading a URL string back out; the URL itself was already
+ * validated server-side before it was ever saved to the user's profile. */
+function getAvatarUrl(participant: Participant): string | null {
+  try {
+    const meta = JSON.parse(participant.metadata || "{}");
+    return typeof meta.avatarUrl === "string" ? meta.avatarUrl : null;
+  } catch {
+    return null;
+  }
+}
+
 export default function ParticipantTile({ participant, refresh }: { participant: Participant; refresh: number }) {
   const videoRef = useRef<HTMLVideoElement>(null);
   const audioRef = useRef<HTMLAudioElement>(null);
+  const [avatarFailed, setAvatarFailed] = useState(false);
   const isScreenSharing = Array.from(participant.videoTrackPublications.values()).some(
     (p) => !!p.track && p.track.source === Track.Source.ScreenShare
   );
@@ -65,6 +82,7 @@ export default function ParticipantTile({ participant, refresh }: { participant:
   }, [participant, refresh]);
 
   const displayName = participant.name || participant.identity;
+  const avatarUrl = getAvatarUrl(participant);
 
   // Renders into the parent tile's `relative` box (sized by MeetingRoom via
   // aspect-video or flex-1), so the video can be absolutely positioned to
@@ -78,12 +96,25 @@ export default function ParticipantTile({ participant, refresh }: { participant:
         // any) has actually been subscribed — and permanently for anyone
         // who never turns their camera on. Without this the tile was
         // just a blank black box, which read as broken rather than
-        // "audio-only" or "still connecting".
+        // "audio-only" or "still connecting". If a profile photo is
+        // available it's shown full-bleed (Google Meet-style) instead of
+        // the plain initials circle; a broken/unreachable image URL
+        // falls back to initials rather than showing a broken-image icon.
         <div className="absolute inset-0 flex flex-col items-center justify-center gap-2 bg-ink-900">
-          <div className="flex h-14 w-14 items-center justify-center rounded-full bg-white/10 text-lg font-semibold text-white/70">
-            {initials(displayName)}
-          </div>
-          <p className="text-xs text-white/40">{participantHasMedia(participant) ? "Camera off" : "Joining…"}</p>
+          {avatarUrl && !avatarFailed ? (
+            <img
+              src={avatarUrl}
+              alt=""
+              onError={() => setAvatarFailed(true)}
+              className="absolute inset-0 h-full w-full object-cover"
+            />
+          ) : (
+            <div className="flex h-14 w-14 items-center justify-center rounded-full bg-white/10 text-lg font-semibold text-white/70">
+              {initials(displayName)}
+            </div>
+          )}
+          {avatarUrl && !avatarFailed && <div className="absolute inset-0 bg-black/25" />}
+          <p className="relative text-xs text-white/60">{participantHasMedia(participant) ? "Camera off" : "Joining…"}</p>
         </div>
       )}
       <video

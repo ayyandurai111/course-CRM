@@ -5,6 +5,7 @@ import LoginPage from "./pages/LoginPage";
 import StudentDashboard from "./pages/StudentDashboard";
 import AdminPanel from "./pages/AdminPanel";
 import MeetingPage from "./pages/MeetingPage";
+import RecordingLayoutPage from "./pages/RecordingLayoutPage";
 import { StudentDashboardSkeletonShell, AdminPanelSkeletonShell } from "./components/common/PageSkeletons";
 
 function RequireMeeting({ children }: { children: JSX.Element }) {
@@ -43,6 +44,12 @@ export default function App() {
         }
       />
       <Route path="/meeting/:id" element={<RequireMeeting><MeetingPage /></RequireMeeting>} />
+      {/* Loaded only by LiveKit Egress's headless Chrome (see
+          meetingRecordingService.js's customBaseUrl) to render meeting
+          recordings — never linked to from the app UI, and intentionally
+          NOT behind RequireMeeting: Egress authenticates to LiveKit with
+          its own recorder token in the URL, not a logged-in session. */}
+      <Route path="/recording-layout" element={<RecordingLayoutPage />} />
       <Route
         path="/admin"
         element={

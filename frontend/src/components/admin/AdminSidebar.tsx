@@ -7,12 +7,14 @@ import {
   CreditCardIcon,
   GlobeIcon,
   VideoIcon,
+  HelpCircleIcon,
 } from "../common/Icons";
 
 const SECTIONS: { key: string; label: string; icon: ComponentType<{ className?: string }> }[] = [
   { key: "overview", label: "Overview", icon: LayoutDashboardIcon },
   { key: "courses", label: "Courses", icon: BookOpenIcon },
   { key: "content", label: "Content", icon: LayersIcon },
+  { key: "quizzes", label: "Quizzes", icon: HelpCircleIcon },
   { key: "meetings", label: "Meetings", icon: VideoIcon },
   { key: "students", label: "Students", icon: UsersIcon },
   { key: "plans", label: "Plans", icon: CreditCardIcon },
