@@ -10,8 +10,8 @@ const { handleEgressEnded } = require("../services/meetingRecordingService");
  * "webhook redelivered" case). Mirrors the fake used in
  * meetingStartRaceCondition.test.js.
  */
-function makeFakeDb({ meetings = [], content = [] } = {}) {
-  const state = { meetings: [...meetings], content: [...content] };
+function makeFakeDb({ meetings = [], content = [], recordingSegments = [] } = {}) {
+  const state = { meetings: [...meetings], content: [...content], meeting_recording_segments: [...recordingSegments] };
 
   function meetingsTable() {
     let filters = {};
@@ -52,10 +52,28 @@ function makeFakeDb({ meetings = [], content = [] } = {}) {
     };
   }
 
+  // Only used by the "unknown egress id" fallback path in
+  // handleEgressEnded (see handleEgressEndedForArchivedSegment) — no
+  // test here currently exercises an actual archived-segment webhook,
+  // so this just needs to correctly report "not found" for any egress
+  // id, matching real Supabase's maybeSingle() behavior on a miss.
+  function recordingSegmentsTable() {
+    let filters = {};
+    return {
+      select() { return this; },
+      eq(col, val) { filters[col] = val; return this; },
+      async maybeSingle() {
+        const found = state.meeting_recording_segments.find((s) => Object.entries(filters).every(([c, v]) => s[c] === v));
+        return { data: found ? { ...found } : null, error: null };
+      },
+    };
+  }
+
   return {
     from(table) {
       if (table === "meetings") return meetingsTable();
       if (table === "content") return contentTable();
+      if (table === "meeting_recording_segments") return recordingSegmentsTable();
       throw new Error(`unexpected table ${table}`);
     },
     currentMeetings: () => state.meetings,

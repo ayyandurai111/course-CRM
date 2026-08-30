@@ -231,7 +231,13 @@ export default function MeetingRoom({ token, wsUrl, meeting, onLeave, isAdmin }:
     // Best-effort clean leave on refresh/close — see the comment above
     // mediaPrefsKey(). Not guaranteed to finish (the tab can vanish
     // mid-flight), but it beats waiting on the server-side timeout.
-    const handlePageHide = () => { try { room.disconnect(); } catch { /* best effort */ } };
+    const handlePageHide = () => {
+      try {
+        room.localParticipant.videoTrackPublications.forEach((pub) => pub.track?.stop());
+        room.localParticipant.audioTrackPublications.forEach((pub) => pub.track?.stop());
+        room.disconnect();
+      } catch { /* best effort */ }
+    };
     window.addEventListener("pagehide", handlePageHide);
 
     const { mic: wantMic, cam: wantCam } = readMediaPrefs(meeting.id);
@@ -293,6 +299,13 @@ export default function MeetingRoom({ token, wsUrl, meeting, onLeave, isAdmin }:
     return () => {
       active = false;
       window.removeEventListener("pagehide", handlePageHide);
+      // Same belt-and-suspenders stop as leave()/handlePageHide above —
+      // covers navigating away by any means other than the Leave
+      // button (browser back, closing the tab via router navigation,
+      // an admin force-navigated elsewhere, etc.) so the camera/mic
+      // hardware light never outlives the component that owns it.
+      room.localParticipant.videoTrackPublications.forEach((pub) => pub.track?.stop());
+      room.localParticipant.audioTrackPublications.forEach((pub) => pub.track?.stop());
       room.disconnect();
       roomRef.current = null;
     };
@@ -458,7 +471,22 @@ export default function MeetingRoom({ token, wsUrl, meeting, onLeave, isAdmin }:
   }
 
   function leave() {
-    roomRef.current?.disconnect();
+    const room = roomRef.current;
+    // Stop the raw hardware tracks *directly* first, before asking the
+    // room to disconnect. room.disconnect() does stop local tracks too
+    // (LiveKit's default), but only as the last step of an async
+    // teardown that also waits on sending a "leave" signal and closing
+    // the WebSocket/peer connection — so there's a window right after
+    // clicking "Leave" where the mic/camera hardware light is still lit
+    // even though the meeting looks like it's already been left on
+    // screen. Stopping the tracks ourselves first means the camera/mic
+    // indicator turns off the instant the button is clicked, and
+    // disconnect() finding an already-stopped track just no-ops on it.
+    if (room) {
+      room.localParticipant.videoTrackPublications.forEach((pub) => pub.track?.stop());
+      room.localParticipant.audioTrackPublications.forEach((pub) => pub.track?.stop());
+    }
+    room?.disconnect();
     // A deliberate "Leave" (vs. a refresh) means there's no upcoming
     // rejoin to carry a preference into — clear it so a later, separate
     // join of this same meeting starts from the normal on/on default

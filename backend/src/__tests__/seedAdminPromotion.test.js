@@ -148,13 +148,24 @@ test("role decision is case-insensitive and trims whitespace, matching the SQL f
   assert.equal(decideRole("other@example.com", "ayyandurai456@gmail.com"), "STUDENT");
 });
 
-test("schema.sql: get_or_create_user_profile only sets ADMIN inside the INSERT values, guarded by on conflict do nothing (never re-promotes/demotes on later logins)", () => {
+test("schema.sql: get_or_create_user_profile only sets ADMIN inside the INSERT values — the on-conflict clause never touches role (never re-promotes/demotes on later logins)", () => {
   const fs = require("fs");
   const path = require("path");
   const sql = fs.readFileSync(path.join(__dirname, "..", "..", "..", "supabase", "schema.sql"), "utf8");
   const fnStart = sql.indexOf("function public.get_or_create_user_profile");
   const fnBody = sql.slice(fnStart, fnStart + 3000);
-  assert.match(fnBody, /on conflict \(id\) do nothing/);
+  // The on-conflict clause exists to re-sync avatar_url on every
+  // login (see 20260829_sync_google_avatar_on_login.sql) — it is
+  // deliberately `do update`, not `do nothing`. What actually matters
+  // for the "never re-promotes/demotes" guarantee this test is named
+  // for is that `excluded.role` never appears anywhere in that
+  // clause, so v_role only ever takes effect on a brand-new row via
+  // the INSERT's own VALUES list.
+  const conflictClauseStart = fnBody.indexOf("on conflict (id) do update");
+  assert.notEqual(conflictClauseStart, -1, "expected an `on conflict (id) do update` clause (avatar re-sync)");
+  const conflictClause = fnBody.slice(conflictClauseStart, conflictClauseStart + 300);
+  assert.doesNotMatch(conflictClause, /excluded\.role/, "the on-conflict clause must never touch role");
+  assert.doesNotMatch(conflictClause, /excluded\.is_active/, "the on-conflict clause must never touch is_active");
   assert.match(fnBody, /p_seed_admin_email/);
   assert.match(fnBody, /lower\(trim\(p_email\)\) = lower\(trim\(p_seed_admin_email\)\)/);
 });

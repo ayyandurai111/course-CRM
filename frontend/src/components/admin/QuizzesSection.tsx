@@ -1,5 +1,5 @@
 import { useEffect, useState } from "react";
-import { apiRequest, ApiError } from "../../lib/apiClient";
+import { apiRequest, ApiError, reportActionError } from "../../lib/apiClient";
 import type { Course, Quiz, QuizStatus } from "../../types";
 import { ErrorState, EmptyState } from "../common/States";
 import { TableSkeleton } from "../common/Skeleton";
@@ -70,7 +70,7 @@ export default function QuizzesSection() {
       await apiRequest(`/quizzes/${quiz.id}`, { method: "DELETE" });
       load();
     } catch (err) {
-      alert(err instanceof ApiError ? err.message : "Couldn't delete this quiz.");
+      reportActionError(err, "Couldn't delete this quiz.");
     }
   }
 

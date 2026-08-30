@@ -1,5 +1,5 @@
 import { useEffect, useState } from "react";
-import { apiRequest, ApiError } from "../../lib/apiClient";
+import { apiRequest, ApiError, reportActionError } from "../../lib/apiClient";
 import type { Plan } from "../../types";
 import { ErrorState, EmptyState } from "../common/States";
 import { PlanCardsSkeleton } from "../common/Skeleton";
@@ -41,7 +41,7 @@ export default function PlansSection() {
       await apiRequest(`/plans/${id}`, { method: "DELETE" });
       load();
     } catch (err) {
-      alert(err instanceof ApiError ? err.message : "Couldn't delete this plan.");
+      reportActionError(err, "Couldn't delete this plan.");
     }
   }
 

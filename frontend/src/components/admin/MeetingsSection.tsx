@@ -1,8 +1,8 @@
-import { useEffect, useState, type FormEvent } from "react";
+import { Fragment, useEffect, useState, type FormEvent } from "react";
 import { useNavigate } from "react-router-dom";
-import { apiRequest, ApiError } from "../../lib/apiClient";
+import { apiRequest, ApiError, reportActionError } from "../../lib/apiClient";
 import { istInputValueToIso, nowAsIstInputValue, formatIst } from "../../lib/istTime";
-import type { ContentItem, Course, Meeting } from "../../types";
+import type { ContentItem, Course, Meeting, MeetingRecordingSegment } from "../../types";
 import { TableSkeleton } from "../common/Skeleton";
 import { ErrorState, EmptyState } from "../common/States";
 import VideoPlayerModal from "../content/VideoPlayerModal";
@@ -49,6 +49,21 @@ function previewContentFor(meeting: Meeting): ContentItem | null {
   };
 }
 
+function previewContentForSegment(meeting: Meeting, segment: MeetingRecordingSegment): ContentItem | null {
+  if (!segment.contentId) return null;
+  return {
+    id: segment.contentId,
+    title: `${meeting.title} (recording ${segment.segmentNumber})`,
+    description: meeting.description,
+    type: "VIDEO",
+    status: "DRAFT",
+    courseId: meeting.courseId,
+    course: meeting.course ?? undefined,
+    durationSeconds: segment.durationSeconds ?? null,
+    createdAt: segment.createdAt,
+  };
+}
+
 export default function MeetingsSection() {
   const [meetings, setMeetings] = useState<Meeting[] | null>(null);
   const [courses, setCourses] = useState<Course[]>([]);
@@ -59,7 +74,8 @@ export default function MeetingsSection() {
   const [description, setDescription] = useState("");
   const [busy, setBusy] = useState(false);
   const [publishingId, setPublishingId] = useState<string | null>(null);
-  const [previewMeeting, setPreviewMeeting] = useState<Meeting | null>(null);
+  const [publishingSegmentId, setPublishingSegmentId] = useState<string | null>(null);
+  const [previewContent, setPreviewContent] = useState<ContentItem | null>(null);
   const [startingId, setStartingId] = useState<string | null>(null);
   const navigate = useNavigate();
 
@@ -88,7 +104,7 @@ export default function MeetingsSection() {
       setTitle(""); setDescription(""); setScheduledAt("");
       await load();
     } catch (err) {
-      alert(err instanceof ApiError ? err.message : "Couldn't create meeting.");
+      reportActionError(err, "Couldn't create meeting.");
     } finally { setBusy(false); }
   }
 
@@ -107,7 +123,7 @@ export default function MeetingsSection() {
       await apiRequest(`/meetings/${id}/start`, { method: "POST" });
       navigate(`/meeting/${id}`);
     } catch (err) {
-      alert(err instanceof ApiError ? err.message : "Couldn't start meeting.");
+      reportActionError(err, "Couldn't start meeting.");
     } finally {
       setStartingId(null);
     }
@@ -115,13 +131,13 @@ export default function MeetingsSection() {
 
   async function endMeeting(id: string) {
     try { await apiRequest(`/meetings/${id}/end`, { method: "POST" }); await load(); }
-    catch (err) { alert(err instanceof ApiError ? err.message : "Couldn't end meeting."); }
+    catch (err) { reportActionError(err, "Couldn't end meeting."); }
   }
 
   async function deleteMeeting(id: string) {
     if (!confirm("Delete this scheduled meeting?")) return;
     try { await apiRequest(`/meetings/${id}`, { method: "DELETE" }); await load(); }
-    catch (err) { alert(err instanceof ApiError ? err.message : "Couldn't delete meeting."); }
+    catch (err) { reportActionError(err, "Couldn't delete meeting."); }
   }
 
   async function publishRecording(id: string) {
@@ -130,9 +146,21 @@ export default function MeetingsSection() {
       await apiRequest(`/meetings/${id}/recording/publish`, { method: "POST" });
       await load();
     } catch (err) {
-      alert(err instanceof ApiError ? err.message : "Couldn't publish the recording.");
+      reportActionError(err, "Couldn't publish the recording.");
     } finally {
       setPublishingId(null);
+    }
+  }
+
+  async function publishSegment(meetingId: string, segmentId: string) {
+    setPublishingSegmentId(segmentId);
+    try {
+      await apiRequest(`/meetings/${meetingId}/segments/${segmentId}/publish`, { method: "POST" });
+      await load();
+    } catch (err) {
+      reportActionError(err, "Couldn't publish this recording.");
+    } finally {
+      setPublishingSegmentId(null);
     }
   }
 
@@ -149,7 +177,7 @@ export default function MeetingsSection() {
     if (m.recordingStatus !== "READY") return null;
     return (
       <>
-        <button onClick={() => setPreviewMeeting(m)} className="text-sm font-semibold text-ink-700">Preview</button>
+        <button onClick={() => setPreviewContent(previewContentFor(m))} className="text-sm font-semibold text-ink-700">Preview</button>
         <button
           onClick={() => publishRecording(m.id)}
           disabled={publishingId === m.id}
@@ -158,6 +186,44 @@ export default function MeetingsSection() {
           {publishingId === m.id ? "Publishing…" : "Publish"}
         </button>
       </>
+    );
+  }
+
+  /**
+   * Earlier recording segments (see MeetingRecordingSegment) — only
+   * ever non-empty when an admin left a LIVE meeting alone (which
+   * stops LiveKit's egress) and later rejoined it, which starts a
+   * fresh segment rather than resuming the dead one. Each one is its
+   * own separate DRAFT content item once ready, so it's listed and
+   * published independently rather than being merged with the
+   * meeting's current recording above.
+   */
+  function recordingSegmentsList(m: Meeting) {
+    const segments = m.recordingSegments;
+    if (!segments || segments.length === 0) return null;
+    return (
+      <div className="mt-2 space-y-1 border-t border-ink-900/8 pt-2">
+        {segments.map((seg) => (
+          <div key={seg.id} className="flex flex-wrap items-center gap-2 text-xs">
+            <span className="font-medium text-ink-600">Recording {seg.segmentNumber}</span>
+            <span className={`rounded-full px-2 py-0.5 font-medium ${RECORDING_BADGE_CLASS[seg.status]}`}>
+              {RECORDING_LABEL[seg.status]}
+            </span>
+            {seg.status === "READY" && (
+              <>
+                <button onClick={() => setPreviewContent(previewContentForSegment(m, seg))} className="font-semibold text-ink-700">Preview</button>
+                <button
+                  onClick={() => publishSegment(m.id, seg.id)}
+                  disabled={publishingSegmentId === seg.id}
+                  className="font-semibold text-emerald-700 disabled:opacity-50"
+                >
+                  {publishingSegmentId === seg.id ? "Publishing…" : "Publish"}
+                </button>
+              </>
+            )}
+          </div>
+        ))}
+      </div>
     );
   }
 
@@ -193,6 +259,7 @@ export default function MeetingsSection() {
                 <p className="mt-1 text-sm text-ink-500">{m.course?.title || "—"}</p>
                 <p className="mt-1 text-xs font-medium text-ink-600">{formatIst(m.scheduledAt)} IST</p>
                 {m.recordingStatus !== "NONE" && <p className="mt-1">{recordingBadge(m)}</p>}
+                {recordingSegmentsList(m)}
                 <div className="mt-3 flex flex-wrap gap-4 border-t border-ink-900/8 pt-3">
                   {m.status === "SCHEDULED" && <button onClick={() => startMeeting(m.id)} disabled={startingId === m.id} className="text-sm font-semibold text-emerald-700 disabled:opacity-50">{startingId === m.id ? "Starting…" : "Start"}</button>}
                   {m.status === "LIVE" && (
@@ -213,7 +280,7 @@ export default function MeetingsSection() {
             <table className="w-full text-left text-sm">
               <thead className="border-b border-ink-900/8 text-xs uppercase tracking-wide text-ink-500"><tr><th className="px-5 py-3">Meeting</th><th className="px-5 py-3">Course</th><th className="px-5 py-3">Time</th><th className="px-5 py-3">Status</th><th className="px-5 py-3" /></tr></thead>
               <tbody className="divide-y divide-ink-900/8">
-                {meetings.map((m) => <tr key={m.id}>
+                {meetings.map((m) => <Fragment key={m.id}><tr>
                   <td className="px-5 py-3 font-medium text-ink-900">{m.title}</td>
                   <td className="px-5 py-3 text-ink-500">{m.course?.title || "—"}</td>
                   <td className="px-5 py-3 text-ink-500">{formatIst(m.scheduledAt)} IST</td>
@@ -224,16 +291,21 @@ export default function MeetingsSection() {
                     {recordingActions(m)}
                     {m.status === "SCHEDULED" && <button onClick={() => deleteMeeting(m.id)} className="text-sm font-semibold text-red-600">Delete</button>}
                   </div></td>
-                </tr>)}
+                </tr>
+                {m.recordingSegments && m.recordingSegments.length > 0 && (
+                  <tr>
+                    <td colSpan={5} className="bg-ink-50/60 px-5 py-2">{recordingSegmentsList(m)}</td>
+                  </tr>
+                )}</Fragment>)}
               </tbody>
             </table>
           </div>
         </>
       )}
-      {previewMeeting && (
+      {previewContent && (
         <VideoPlayerModal
-          content={previewContentFor(previewMeeting)!}
-          onClose={() => setPreviewMeeting(null)}
+          content={previewContent}
+          onClose={() => setPreviewContent(null)}
         />
       )}
     </div>

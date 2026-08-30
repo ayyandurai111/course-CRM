@@ -1,7 +1,7 @@
 import { Link, useNavigate } from "react-router-dom";
 import { useEffect, useState } from "react";
 import { useAuth } from "../context/AuthContext";
-import { ApiError } from "../lib/apiClient";
+import { ApiError, consumeSessionExpiredMessage } from "../lib/apiClient";
 
 function friendlyAuthError(err: unknown): string {
   if (err instanceof ApiError) return err.message;
@@ -25,6 +25,14 @@ export default function LoginPage() {
   useEffect(() => {
     if (user) navigate(user.role === "ADMIN" ? "/admin" : "/dashboard", { replace: true });
   }, [user, navigate]);
+
+  // Landed here because apiClient detected a dead session (forced
+  // refresh failed too) and signed us out. Show that reason once
+  // instead of leaving the person wondering why they got bounced.
+  useEffect(() => {
+    const msg = consumeSessionExpiredMessage();
+    if (msg) setError(msg);
+  }, []);
 
   async function handleGoogle() {
     setError(null);

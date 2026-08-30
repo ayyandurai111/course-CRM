@@ -1,5 +1,5 @@
 import { useEffect, useState } from "react";
-import { apiRequest, ApiError } from "../../lib/apiClient";
+import { apiRequest, ApiError, reportActionError } from "../../lib/apiClient";
 import type { Course } from "../../types";
 import { ErrorState, EmptyState } from "../common/States";
 import { TableSkeleton } from "../common/Skeleton";
@@ -33,7 +33,7 @@ export default function CoursesSection() {
       await apiRequest(`/courses/${id}`, { method: "DELETE" });
       load();
     } catch (err) {
-      alert(err instanceof ApiError ? err.message : "Couldn't delete this course.");
+      reportActionError(err, "Couldn't delete this course.");
     }
   }
 

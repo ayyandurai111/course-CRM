@@ -1,5 +1,5 @@
 import { useEffect, useState } from "react";
-import { apiRequest, ApiError } from "../../lib/apiClient";
+import { apiRequest, ApiError, reportActionError } from "../../lib/apiClient";
 import type { Student, Plan } from "../../types";
 import { ErrorState, EmptyState } from "../common/States";
 import { TableSkeleton } from "../common/Skeleton";
@@ -98,7 +98,7 @@ export default function StudentsSection() {
       await apiRequest(`/students/${student.id}`, { method: "DELETE" });
       load();
     } catch (err) {
-      alert(err instanceof ApiError ? err.message : "Couldn't delete this student.");
+      reportActionError(err, "Couldn't delete this student.");
     }
   }
 

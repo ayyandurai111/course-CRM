@@ -1,5 +1,5 @@
 import { useEffect, useState } from "react";
-import { apiRequest, ApiError } from "../../lib/apiClient";
+import { apiRequest, ApiError, reportActionError } from "../../lib/apiClient";
 import type { Course, ContentItem, ContentStatus, ContentType } from "../../types";
 import { ErrorState, EmptyState } from "../common/States";
 import { TableSkeleton } from "../common/Skeleton";
@@ -76,7 +76,7 @@ export default function ContentSection() {
         await apiRequest(`/content/${item.id}`, { method: "DELETE" });
         await load();
       } catch (err) {
-        alert(err instanceof ApiError ? err.message : "Couldn't delete this content.");
+        reportActionError(err, "Couldn't delete this content.");
       }
       return;
     }
@@ -85,7 +85,7 @@ export default function ContentSection() {
       await apiRequest(`/content/${item.id}/${action}`, { method: "POST" });
       load();
     } catch (err) {
-      alert(err instanceof ApiError ? err.message : "That action isn't valid right now.");
+      reportActionError(err, "That action isn't valid right now.");
     }
   }
 

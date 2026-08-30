@@ -8,6 +8,25 @@ export type MeetingStatus = "SCHEDULED" | "LIVE" | "ENDED" | "CANCELLED";
 
 export type MeetingRecordingStatus = "NONE" | "RECORDING" | "PROCESSING" | "READY" | "FAILED";
 
+/** An earlier recording segment that isn't the meeting's current one
+ * anymore — created when someone (an admin) rejoins a still-LIVE
+ * meeting after its egress had already stopped (the room went empty)
+ * and a fresh segment was started to keep recording. See
+ * meetingRecordingService.js's resumeRecordingIfDropped(). */
+export interface MeetingRecordingSegment {
+  id: string;
+  meetingId: string;
+  segmentNumber: number;
+  status: "PROCESSING" | "READY" | "FAILED";
+  egressId?: string | null;
+  contentId?: string | null;
+  fileKey?: string | null;
+  durationSeconds?: number | null;
+  fileSizeBytes?: number | null;
+  error?: string | null;
+  createdAt: string;
+}
+
 export interface Meeting {
   id: string;
   courseId: string;
@@ -28,6 +47,10 @@ export interface Meeting {
   recordingDurationSeconds?: number | null;
   recordingFileSizeBytes?: number | null;
   recordingError?: string | null;
+  // Earlier segments superseded by a resumed recording (see
+  // MeetingRecordingSegment above) — empty for the common case of one
+  // continuous recording per meeting.
+  recordingSegments?: MeetingRecordingSegment[];
 }
 
 export interface User {

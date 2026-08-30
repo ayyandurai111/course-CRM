@@ -100,6 +100,66 @@ async function stopRecording({ meeting, egressClient }) {
 }
 
 /**
+ * Handles someone (currently: an admin — see meetings.routes.js's
+ * GET /:id/token) rejoining a meeting that's still LIVE but whose
+ * recording isn't currently RECORDING. That combination only happens
+ * when the earlier egress already stopped on its own — LiveKit stops
+ * RoomComposite egress once its room has zero participants, which is
+ * exactly what "everyone left, including the admin" looks like from
+ * Egress's point of view. There's no way to resume a stopped egress
+ * mid-file, so this archives whatever the last segment produced (if
+ * anything) into meeting_recording_segments and starts a fresh one,
+ * so the class continues being recorded from the moment someone is
+ * back in the room, instead of silently staying unrecorded for the
+ * rest of the class.
+ *
+ * Best-effort like the rest of this module: rejoining the meeting
+ * must never fail just because this bookkeeping did.
+ */
+async function resumeRecordingIfDropped({ meeting, egressClient, db }) {
+  if (!recordingEnabled()) return null;
+  if (meeting.recordingStatus === "RECORDING" || meeting.recordingStatus === "NONE") return null;
+
+  try {
+    if (meeting.recordingEgressId) {
+      const { count, error: countError } = await db
+        .from("meeting_recording_segments")
+        .select("id", { count: "exact", head: true })
+        .eq("meeting_id", meeting.id);
+      assertNoError(countError, "Failed to count existing recording segments");
+      await db.from("meeting_recording_segments").insert(
+        toSnake({
+          meetingId: meeting.id,
+          segmentNumber: (count || 0) + 1,
+          status: meeting.recordingStatus === "READY" ? "READY" : meeting.recordingStatus === "FAILED" ? "FAILED" : "PROCESSING",
+          egressId: meeting.recordingEgressId,
+          contentId: meeting.recordingContentId,
+          fileKey: meeting.recordingFileKey,
+          durationSeconds: meeting.recordingDurationSeconds,
+          fileSizeBytes: meeting.recordingFileSizeBytes,
+          error: meeting.recordingError,
+        })
+      );
+    }
+
+    const started = await startRecording({ meeting, egressClient });
+    if (!started) return null;
+
+    const { data, error } = await db
+      .from("meetings")
+      .update(toSnake(started))
+      .eq("id", meeting.id)
+      .select("*, courses(id,title)")
+      .maybeSingle();
+    assertNoError(error, "Failed to persist resumed recording");
+    return data;
+  } catch (err) {
+    console.warn("[meeting-recording] failed to resume recording on rejoin", err?.message || err);
+    return null;
+  }
+}
+
+/**
  * Handles LiveKit's `egress_ended` webhook event: finds the meeting
  * this egress belonged to, and on success creates the DRAFT `content`
  * row an admin can then Preview/Publish from the Meetings screen.
@@ -118,7 +178,15 @@ async function handleEgressEnded(egressInfo, db = supabase) {
     .eq("recording_egress_id", egressId)
     .maybeSingle();
   assertNoError(findError, "Failed to load meeting for egress webhook");
-  if (!meetingRow) return; // not one of ours (or already handled/cleared)
+
+  if (!meetingRow) {
+    // Not the CURRENT segment — either not ours at all, or this event
+    // belongs to an earlier segment that's already been superseded by
+    // a resumed recording (see resumeRecordingIfDropped above), whose
+    // archived row is what needs updating instead of the meetings row.
+    await handleEgressEndedForArchivedSegment(egressInfo, db);
+    return;
+  }
   const meeting = row(meetingRow);
 
   const failed = egressInfo.status === EgressStatus.EGRESS_FAILED || egressInfo.status === EgressStatus.EGRESS_ABORTED;
@@ -184,4 +252,65 @@ async function handleEgressEnded(egressInfo, db = supabase) {
     .eq("id", meeting.id);
 }
 
-module.exports = { startRecording, stopRecording, handleEgressEnded };
+/**
+ * Same finalization as the block above, but for a segment that's
+ * already been archived to meeting_recording_segments (its egress id
+ * no longer matches any meetings row because a rejoin already started
+ * a newer segment before this webhook arrived).
+ */
+async function handleEgressEndedForArchivedSegment(egressInfo, db) {
+  const egressId = egressInfo.egressId;
+  const { data: segmentRow, error: findError } = await db
+    .from("meeting_recording_segments")
+    .select("*")
+    .eq("egress_id", egressId)
+    .maybeSingle();
+  assertNoError(findError, "Failed to load recording segment for egress webhook");
+  if (!segmentRow) return; // not one of ours
+  const segment = row(segmentRow);
+
+  const failed = egressInfo.status === EgressStatus.EGRESS_FAILED || egressInfo.status === EgressStatus.EGRESS_ABORTED;
+  const fileResult = Array.isArray(egressInfo.fileResults) ? egressInfo.fileResults[0] : null;
+
+  if (failed || !fileResult) {
+    await db
+      .from("meeting_recording_segments")
+      .update(toSnake({ status: "FAILED", error: (egressInfo.error || "Recording did not produce a file.").slice(0, 500) }))
+      .eq("id", segment.id);
+    return;
+  }
+
+  const durationSeconds = fileResult.duration ? Math.round(Number(fileResult.duration) / 1e9) : null;
+  const fileSizeBytes = fileResult.size ? Number(fileResult.size) : null;
+
+  const { data: meetingRow } = await db.from("meetings").select("title,description,course_id,created_by_id").eq("id", segment.meetingId).maybeSingle();
+
+  if (meetingRow && segment.contentId) {
+    const { error: insertError } = await db.from("content").insert(
+      toSnake({
+        id: segment.contentId,
+        title: meetingRow.title,
+        description: meetingRow.description || "",
+        type: "VIDEO",
+        courseId: meetingRow.course_id,
+        fileKey: segment.fileKey,
+        fileSizeBytes,
+        durationSeconds,
+        status: "DRAFT",
+        createdById: meetingRow.created_by_id,
+      })
+    );
+    if (insertError && insertError.code !== "23505") {
+      console.error("[meeting-recording] failed to create content row from archived segment", insertError);
+      await db.from("meeting_recording_segments").update(toSnake({ status: "FAILED", error: "Failed to save recording as course content." })).eq("id", segment.id);
+      return;
+    }
+  }
+
+  await db
+    .from("meeting_recording_segments")
+    .update(toSnake({ status: "READY", durationSeconds, fileSizeBytes, error: null }))
+    .eq("id", segment.id);
+}
+
+module.exports = { startRecording, stopRecording, resumeRecordingIfDropped, handleEgressEnded };

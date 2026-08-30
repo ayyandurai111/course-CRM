@@ -3,11 +3,18 @@ import { supabase } from "./supabaseClient";
 export class ApiError extends Error {
   status: number;
   code?: string;
-  constructor(message: string, status: number, code?: string) {
+  // True when this error is the tail end of a confirmed session expiry
+  // (forced refresh already failed and signOut() has been triggered).
+  // Call sites should skip their usual alert() for this case — the
+  // user is about to be redirected to /login with a friendly message
+  // instead, so popping a native alert on top of that is redundant.
+  sessionExpired?: boolean;
+  constructor(message: string, status: number, code?: string, sessionExpired?: boolean) {
     super(message);
     this.name = "ApiError";
     this.status = status;
     this.code = code;
+    this.sessionExpired = sessionExpired;
   }
 }
 
@@ -17,6 +24,18 @@ interface RequestOptions {
   isFormData?: boolean;
   signal?: AbortSignal;
   timeoutMs?: number;
+}
+
+// Fires once when a request discovers the session is truly gone (not
+// just a stale cached token — the forced refresh itself failed too).
+// LoginPage listens for this via sessionStorage to show a friendly
+// "please sign in again" message instead of every call site popping
+// its own alert() on top of the redirect that AuthContext/App.tsx
+// already trigger once supabase.auth.signOut() fires SIGNED_OUT.
+const SESSION_EXPIRED_KEY = "coursewell:session-expired-message";
+
+function markSessionExpired(message: string) {
+  try { sessionStorage.setItem(SESSION_EXPIRED_KEY, message); } catch { /* ignore */ }
 }
 
 let inFlightRefresh: Promise<string | null> | null = null;
@@ -97,6 +116,7 @@ async function doFetch(path: string, options: RequestOptions, token: string | nu
 }
 
 export async function apiRequest<T = unknown>(path: string, options: RequestOptions = {}): Promise<T> {
+  let sessionExpired = false;
   try {
     let token = await getToken();
     let res = await doFetch(path, options, token);
@@ -117,6 +137,8 @@ export async function apiRequest<T = unknown>(path: string, options: RequestOpti
           // guards redirect to /login on their own, instead of the
           // "Try again" button on this error retrying the exact same
           // doomed request forever.
+          sessionExpired = true;
+          markSessionExpired("Your session expired. Please sign in again.");
           supabase.auth.signOut().catch(() => {});
         }
       } catch {
@@ -125,6 +147,8 @@ export async function apiRequest<T = unknown>(path: string, options: RequestOpti
         // coming back on its own, so clear it now rather than leaving
         // a dead session in localStorage for every future request to
         // trip over again.
+        sessionExpired = true;
+        markSessionExpired("Your session expired. Please sign in again.");
         supabase.auth.signOut().catch(() => {});
       }
     }
@@ -138,7 +162,7 @@ export async function apiRequest<T = unknown>(path: string, options: RequestOpti
         res.status === 404 ? "The requested resource was not found." :
         res.status === 429 ? "Too many requests. Please wait a moment and try again." :
         "Something went wrong. Please try again.";
-      throw new ApiError(message, res.status, typeof data.code === "string" ? data.code : undefined);
+      throw new ApiError(message, res.status, typeof data.code === "string" ? data.code : undefined, sessionExpired);
     }
     return data as T;
   } catch (err) {
@@ -151,3 +175,31 @@ export async function apiRequest<T = unknown>(path: string, options: RequestOpti
 }
 
 export { getToken };
+
+/**
+ * Drop-in replacement for the old `alert(err instanceof ApiError ? err.message : fallback)`
+ * pattern used across the admin screens. Skips the popup entirely when
+ * the error is a confirmed session expiry — App.tsx's route guards are
+ * already redirecting to /login, and LoginPage shows the friendly
+ * message on arrival (see SESSION_EXPIRED_KEY above), so an extra
+ * native alert() on top of that redirect is just noise.
+ */
+export function reportActionError(err: unknown, fallback: string) {
+  if (err instanceof ApiError) {
+    if (err.sessionExpired) return;
+    alert(err.message);
+    return;
+  }
+  alert(fallback);
+}
+
+/** Read + clear the one-shot "you were signed out" message, if any. */
+export function consumeSessionExpiredMessage(): string | null {
+  try {
+    const msg = sessionStorage.getItem(SESSION_EXPIRED_KEY);
+    if (msg) sessionStorage.removeItem(SESSION_EXPIRED_KEY);
+    return msg;
+  } catch {
+    return null;
+  }
+}

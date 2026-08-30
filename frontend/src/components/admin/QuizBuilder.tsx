@@ -1,5 +1,5 @@
 import { useEffect, useState } from "react";
-import { apiRequest, ApiError } from "../../lib/apiClient";
+import { apiRequest, ApiError, reportActionError } from "../../lib/apiClient";
 import type { Quiz, QuizQuestion } from "../../types";
 import { LoadingState, ErrorState, EmptyState } from "../common/States";
 import { Field, inputClass } from "../forms/FormFields";
@@ -60,7 +60,7 @@ export default function QuizBuilder({
       setQuiz(updated);
       setMetaDirty(false);
     } catch (err) {
-      alert(err instanceof ApiError ? err.message : "Couldn't save quiz details.");
+      reportActionError(err, "Couldn't save quiz details.");
     } finally {
       setSavingMeta(false);
     }
@@ -72,7 +72,7 @@ export default function QuizBuilder({
       await apiRequest(`/quizzes/${quizId}/questions/${question.id}`, { method: "DELETE" });
       load();
     } catch (err) {
-      alert(err instanceof ApiError ? err.message : "Couldn't delete this question.");
+      reportActionError(err, "Couldn't delete this question.");
     }
   }
 
@@ -91,7 +91,7 @@ export default function QuizBuilder({
       });
       setQuestions(saved);
     } catch (err) {
-      alert(err instanceof ApiError ? err.message : "Couldn't reorder questions.");
+      reportActionError(err, "Couldn't reorder questions.");
       load(); // roll back to server state
     } finally {
       setReordering(false);

@@ -6,7 +6,7 @@ const { supabase, row, rows, toSnake, assertNoError } = require("../lib/db");
 const { authenticate, requireAdmin } = require("../middleware/auth");
 const { userCanAccessCourseForLiveMeeting } = require("../services/accessService");
 const { logAction } = require("../services/auditService");
-const { startRecording, stopRecording } = require("../services/meetingRecordingService");
+const { startRecording, stopRecording, resumeRecordingIfDropped } = require("../services/meetingRecordingService");
 const contentService = require("../services/contentService");
 
 const router = express.Router();
@@ -54,6 +54,33 @@ router.get("/admin", authenticate, requireAdmin, async (req, res, next) => {
     assertNoError(error, "Failed to load meetings");
     const shaped = rows(data).map((m) => ({ ...m, course: m.courses || null }));
     shaped.forEach((m) => delete m.courses);
+
+    // Attach any earlier recording segments (see
+    // resumeRecordingIfDropped / 20260829_add_meeting_recording_segments.sql)
+    // so the Meetings screen can offer Preview/Publish on a recording
+    // that finished before an admin's rejoin started a newer one —
+    // otherwise that earlier segment's file would just sit in Storage
+    // with no way to ever publish it. Most meetings have none of these
+    // (only one segment, tracked directly on the meeting row), so this
+    // is a single extra query rather than N+1.
+    const meetingIds = shaped.map((m) => m.id);
+    if (meetingIds.length) {
+      const { data: segmentRows, error: segError } = await supabase
+        .from("meeting_recording_segments")
+        .select("*")
+        .in("meeting_id", meetingIds)
+        .order("segment_number", { ascending: true });
+      assertNoError(segError, "Failed to load recording segments");
+      const byMeeting = new Map();
+      for (const s of rows(segmentRows)) {
+        if (!byMeeting.has(s.meetingId)) byMeeting.set(s.meetingId, []);
+        byMeeting.get(s.meetingId).push(s);
+      }
+      shaped.forEach((m) => { m.recordingSegments = byMeeting.get(m.id) || []; });
+    } else {
+      shaped.forEach((m) => { m.recordingSegments = []; });
+    }
+
     res.json({ meetings: shaped });
   } catch (err) { next(err); }
 });
@@ -289,6 +316,38 @@ router.post("/:id/recording/publish", authenticate, requireAdmin, async (req, re
   } catch (err) { next(err); }
 });
 
+// Publishes an earlier recording SEGMENT (see
+// meeting_recording_segments / resumeRecordingIfDropped) rather than
+// the meeting's current/latest recording — the same "recording ->
+// DRAFT content -> publish" flow as above, just addressed by segment
+// id instead of assuming there's only ever one recording per meeting.
+async function publishSegmentCore(meetingId, segmentId, deps) {
+  const { data: segmentData, error } = await deps.supabase
+    .from("meeting_recording_segments")
+    .select("*")
+    .eq("id", segmentId)
+    .eq("meeting_id", meetingId)
+    .maybeSingle();
+  assertNoError(error, "Failed to load recording segment");
+  if (!segmentData) return { status: 404, body: { error: "Recording segment not found." } };
+  const segment = row(segmentData);
+  if (segment.status !== "READY" || !segment.contentId) {
+    return { status: 409, body: { error: "This recording has no file ready to publish yet." } };
+  }
+  const content = await deps.publishNow(segment.contentId);
+  return { status: 200, body: { content }, segment };
+}
+
+router.post("/:id/segments/:segmentId/publish", authenticate, requireAdmin, async (req, res, next) => {
+  try {
+    const result = await publishSegmentCore(req.params.id, req.params.segmentId, { supabase, publishNow: contentService.publishNow });
+    if (result.status === 200) {
+      await logAction({ actorId: req.user.id, action: "meeting.recording_segment_publish", entityType: "Meeting", entityId: req.params.id, metadata: { segmentId: req.params.segmentId, contentId: result.body.content.id } });
+    }
+    res.status(result.status).json(result.body);
+  } catch (err) { next(err); }
+});
+
 router.delete("/:id", authenticate, requireAdmin, async (req, res, next) => {
   try {
     const { error } = await supabase.from("meetings").delete().eq("id", req.params.id).in("status", ["SCHEDULED", "CANCELLED"]);
@@ -316,10 +375,26 @@ router.get("/:id/token", authenticate, async (req, res, next) => {
     const { data, error } = await supabase.from("meetings").select("*, courses(id,title)").eq("id", req.params.id).maybeSingle();
     assertNoError(error, "Failed to load meeting");
     if (!data) return res.status(404).json({ error: "Meeting not found." });
-    const meeting = row(data);
+    let meeting = row(data);
     const isAdmin = req.user.role === "ADMIN";
     if (!isAdmin && !(await userCanAccessCourseForLiveMeeting(req.user.id, meeting.courseId))) return res.status(403).json({ error: "You do not have access to this course." });
     if (meeting.status !== "LIVE") return res.status(409).json({ error: "The meeting is not live yet." });
+
+    // An admin rejoining a still-LIVE meeting whose recording isn't
+    // currently RECORDING means the earlier egress already stopped on
+    // its own (LiveKit stops RoomComposite egress once its room is
+    // empty — the exact state "everyone left" leaves behind). Start a
+    // fresh segment so the rest of the class keeps being recorded
+    // instead of silently going unrecorded from here on. Best-effort:
+    // must never block the admin from actually rejoining.
+    if (isAdmin) {
+      try {
+        const resumed = await resumeRecordingIfDropped({ meeting, egressClient: liveKitApi(), db: supabase });
+        if (resumed) meeting = row(resumed);
+      } catch (err) {
+        console.warn("[meeting] failed to resume recording on rejoin", err?.message || err);
+      }
+    }
 
     const { apiKey, apiSecret, wsUrl } = requireLiveKitConfig();
     const token = new AccessToken(apiKey, apiSecret, {
@@ -346,3 +421,4 @@ router.get("/:id/token", authenticate, async (req, res, next) => {
 module.exports = router;
 module.exports.startMeetingCore = startMeetingCore;
 module.exports.publishRecordingCore = publishRecordingCore;
+module.exports.publishSegmentCore = publishSegmentCore;
