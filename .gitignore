@@ -1,0 +1,44 @@
+# --- Dependencies -----------------------------------------------------
+# npm workspaces hoist almost everything to the root node_modules, but
+# ignore all three locations since a package can still get its own.
+node_modules/
+backend/node_modules/
+frontend/node_modules/
+
+# --- Environment / secrets ---------------------------------------------
+# Real credentials (Supabase service role key, LiveKit secrets, etc.)
+# must never be committed. Only the .env.example templates are tracked.
+.env
+.env.local
+.env.*.local
+backend/.env
+frontend/.env
+
+# --- Build output --------------------------------------------------------
+frontend/dist/
+frontend/tsconfig.tsbuildinfo
+dist/
+build/
+
+# --- Logs ---------------------------------------------------------------
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+*.log
+
+# --- Test / coverage ------------------------------------------------------
+coverage/
+
+# --- OS files -------------------------------------------------------------
+.DS_Store
+Thumbs.db
+
+# --- Editor files -----------------------------------------------------
+.vscode/
+.idea/
+*.swp
+
+# --- Local temp/upload scratch space (backend streams uploads to disk
+# briefly before pushing to Supabase Storage; never commit leftovers) --
+backend/tmp/
+*.tmp

@@ -1,0 +1,28 @@
+# Example production config for self-hosted LiveKit + Egress with
+# recording enabled. Copy alongside your real docker-compose file and
+# fill in real values — do not commit real secrets.
+#
+# Egress needs its own config file (egress.yaml, same directory) that
+# just points back at this server; see egress.yaml.example.
+
+port: 7880
+rtc:
+  tcp_port: 7881
+  port_range_start: 50000
+  port_range_end: 60000
+  # use_external_ip: true   # uncomment for a real multi-node/cloud deployment
+
+keys:
+  # api_key: api_secret — same values as LIVEKIT_API_KEY / LIVEKIT_API_SECRET
+  # in backend/.env. Egress authenticates back to this server with the
+  # same key pair.
+  your_livekit_api_key: your_livekit_api_secret
+
+# Tells LiveKit where to POST webhook events (room_started, egress_ended,
+# etc). The backend's /api/livekit/webhook route verifies these are
+# signed with the api_key/secret above — see
+# backend/src/routes/livekitWebhook.routes.js.
+webhook:
+  api_key: your_livekit_api_key
+  urls:
+    - https://your-backend-domain.example.com/api/livekit/webhook

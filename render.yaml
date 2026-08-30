@@ -1,0 +1,72 @@
+# Render Blueprint — https://render.com/docs/blueprint-spec
+#
+# Deploys Coursewell as ONE web service (single-server mode): the
+# backend builds the frontend and serves it, so you get one URL.
+#
+# Usage:
+#   1. Push this repo to GitHub/GitLab.
+#   2. Render dashboard → New → Blueprint → connect the repo. Render
+#      reads this file automatically and creates the service below.
+#   3. Fill in the env vars marked "sync: false" in the Render
+#      dashboard (Render never reads secrets from this file).
+#   4. Deploy.
+#
+# You do NOT need a Render Postgres/Redis instance — the database is
+# your Supabase project, reached over the internet via SUPABASE_URL.
+
+services:
+  - type: web
+    name: coursewell
+    runtime: node
+    plan: starter          # change to your preferred plan
+    region: oregon          # change to your preferred region
+    branch: main             # change if your default branch differs
+    rootDir: .
+    buildCommand: npm run install:all && npm run build
+    startCommand: npm start --prefix backend
+    healthCheckPath: /api/health
+    autoDeploy: true
+    envVars:
+      - key: NODE_ENV
+        value: production
+      # Render provides PORT automatically at runtime; index.js reads
+      # process.env.PORT already, so nothing to set here.
+
+      # --- Backend: Supabase service-role credentials (secrets) -----
+      - key: SUPABASE_URL
+        sync: false
+      - key: SUPABASE_SERVICE_ROLE_KEY
+        sync: false
+      - key: SUPABASE_STORAGE_BUCKET
+        value: course-files
+      - key: TRUST_PROXY_HOPS
+        value: "1"
+      - key: ALLOWED_IMAGE_ORIGINS
+        sync: false
+      - key: ADMIN_BOOTSTRAP_TOKEN
+        sync: false
+
+      # --- Backend: upload limits / rate limiting --------------------
+      - key: MAX_VIDEO_SIZE_MB
+        value: "500"
+      - key: MAX_PDF_SIZE_MB
+        value: "50"
+      - key: MAX_IMAGE_SIZE_MB
+        value: "10"
+      - key: UPLOAD_RATE_LIMIT_PER_15MIN
+        value: "60"
+      - key: MAX_USER_UPLOAD_BYTES_PER_DAY
+        value: "5368709120"
+
+      # --- Frontend: baked into the Vite build at buildCommand time --
+      # (VITE_* vars must be set BEFORE `npm run build` runs, which is
+      # why they're plain envVars here, not a separate step — Render
+      # injects them into the build environment automatically.)
+      - key: VITE_SUPABASE_URL
+        sync: false
+      - key: VITE_SUPABASE_ANON_KEY
+        sync: false
+
+      # CORS_ORIGIN is intentionally omitted: in single-server mode the
+      # browser only ever calls same-origin, so it's not needed. Add it
+      # only if you later split the frontend out to a separate host.
