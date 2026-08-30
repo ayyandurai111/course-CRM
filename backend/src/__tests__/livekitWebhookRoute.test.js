@@ -182,11 +182,103 @@ test("webhook: a differently-typed event (e.g. room_started) is accepted but doe
     let called = false;
     const body = JSON.stringify({ event: "room_started", room: { name: "some-room" } });
     const token = await signWebhook(body);
+    // recordingEnabled left at its real (false, no S3 env set in
+    // tests) default so this doesn't attempt a real Supabase call —
+    // see the dedicated room_started tests below for that path with
+    // fakes injected.
     await withServer({ handleEgressEnded: async () => { called = true; } }, async (port) => {
       const res = await postWebhook(port, body, { Authorization: token });
       assert.equal(res.status, 200);
     });
     assert.equal(called, false);
+  });
+});
+
+test("webhook: room_started for a LIVE meeting resumes a dropped recording when recording is configured", async () => {
+  await withEnv({ LIVEKIT_API_KEY: REAL_API_KEY, LIVEKIT_API_SECRET: REAL_API_SECRET, LIVEKIT_WS_URL: "wss://livekit.example.com" }, async () => {
+    const body = JSON.stringify({ event: "room_started", room: { name: "course-course-1-abc" } });
+    const token = await signWebhook(body);
+    let resumeCalledWith = null;
+    const fakeSupabase = {
+      from(table) {
+        assert.equal(table, "meetings");
+        return {
+          select() { return this; },
+          eq(col, val) {
+            if (col === "room_name") assert.equal(val, "course-course-1-abc");
+            if (col === "status") assert.equal(val, "LIVE");
+            return this;
+          },
+          async maybeSingle() {
+            return { data: { id: "m1", room_name: "course-course-1-abc", status: "LIVE", recording_status: "FAILED" }, error: null };
+          },
+        };
+      },
+    };
+    await withServer(
+      {
+        recordingEnabled: () => true,
+        supabase: fakeSupabase,
+        resumeRecordingIfDropped: async (args) => { resumeCalledWith = args; return null; },
+      },
+      async (port) => {
+        const res = await postWebhook(port, body, { Authorization: token });
+        assert.equal(res.status, 200);
+      }
+    );
+    assert.ok(resumeCalledWith, "resumeRecordingIfDropped should have been called");
+    assert.equal(resumeCalledWith.meeting.id, "m1");
+  });
+});
+
+test("webhook: room_started for a room with no matching LIVE meeting is a safe no-op", async () => {
+  await withEnv({ LIVEKIT_API_KEY: REAL_API_KEY, LIVEKIT_API_SECRET: REAL_API_SECRET }, async () => {
+    const body = JSON.stringify({ event: "room_started", room: { name: "not-a-meeting-room" } });
+    const token = await signWebhook(body);
+    let resumeCalled = false;
+    const fakeSupabase = {
+      from() {
+        return {
+          select() { return this; },
+          eq() { return this; },
+          async maybeSingle() { return { data: null, error: null }; },
+        };
+      },
+    };
+    await withServer(
+      {
+        recordingEnabled: () => true,
+        supabase: fakeSupabase,
+        resumeRecordingIfDropped: async () => { resumeCalled = true; },
+      },
+      async (port) => {
+        const res = await postWebhook(port, body, { Authorization: token });
+        assert.equal(res.status, 200);
+      }
+    );
+    assert.equal(resumeCalled, false);
+  });
+});
+
+test("webhook: room_started is skipped entirely when recording isn't configured (recordingEnabled() false)", async () => {
+  await withEnv({ LIVEKIT_API_KEY: REAL_API_KEY, LIVEKIT_API_SECRET: REAL_API_SECRET }, async () => {
+    const body = JSON.stringify({ event: "room_started", room: { name: "course-course-1-abc" } });
+    const token = await signWebhook(body);
+    let supabaseTouched = false;
+    const fakeSupabase = {
+      from() {
+        supabaseTouched = true;
+        throw new Error("should not be called");
+      },
+    };
+    await withServer(
+      { recordingEnabled: () => false, supabase: fakeSupabase, resumeRecordingIfDropped: async () => {} },
+      async (port) => {
+        const res = await postWebhook(port, body, { Authorization: token });
+        assert.equal(res.status, 200);
+      }
+    );
+    assert.equal(supabaseTouched, false);
   });
 });
 

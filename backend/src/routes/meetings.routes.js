@@ -6,7 +6,7 @@ const { supabase, row, rows, toSnake, assertNoError } = require("../lib/db");
 const { authenticate, requireAdmin } = require("../middleware/auth");
 const { userCanAccessCourseForLiveMeeting } = require("../services/accessService");
 const { logAction } = require("../services/auditService");
-const { startRecording, stopRecording, resumeRecordingIfDropped } = require("../services/meetingRecordingService");
+const { startRecording, stopRecording } = require("../services/meetingRecordingService");
 const contentService = require("../services/contentService");
 
 const router = express.Router();
@@ -56,7 +56,7 @@ router.get("/admin", authenticate, requireAdmin, async (req, res, next) => {
     shaped.forEach((m) => delete m.courses);
 
     // Attach any earlier recording segments (see
-    // resumeRecordingIfDropped / 20260829_add_meeting_recording_segments.sql)
+    // resumeRecordingIfDropped / 20260829150000_add_meeting_recording_segments.sql)
     // so the Meetings screen can offer Preview/Publish on a recording
     // that finished before an admin's rejoin started a newer one —
     // otherwise that earlier segment's file would just sit in Storage
@@ -375,26 +375,23 @@ router.get("/:id/token", authenticate, async (req, res, next) => {
     const { data, error } = await supabase.from("meetings").select("*, courses(id,title)").eq("id", req.params.id).maybeSingle();
     assertNoError(error, "Failed to load meeting");
     if (!data) return res.status(404).json({ error: "Meeting not found." });
-    let meeting = row(data);
+    const meeting = row(data);
     const isAdmin = req.user.role === "ADMIN";
     if (!isAdmin && !(await userCanAccessCourseForLiveMeeting(req.user.id, meeting.courseId))) return res.status(403).json({ error: "You do not have access to this course." });
     if (meeting.status !== "LIVE") return res.status(409).json({ error: "The meeting is not live yet." });
 
-    // An admin rejoining a still-LIVE meeting whose recording isn't
-    // currently RECORDING means the earlier egress already stopped on
-    // its own (LiveKit stops RoomComposite egress once its room is
-    // empty — the exact state "everyone left" leaves behind). Start a
-    // fresh segment so the rest of the class keeps being recorded
-    // instead of silently going unrecorded from here on. Best-effort:
-    // must never block the admin from actually rejoining.
-    if (isAdmin) {
-      try {
-        const resumed = await resumeRecordingIfDropped({ meeting, egressClient: liveKitApi(), db: supabase });
-        if (resumed) meeting = row(resumed);
-      } catch (err) {
-        console.warn("[meeting] failed to resume recording on rejoin", err?.message || err);
-      }
-    }
+    // NOTE: resuming a dropped recording (see resumeRecordingIfDropped /
+    // 20260829150000_add_meeting_recording_segments.sql) does NOT
+    // happen here. It's tempting to kick it off at token-issue time
+    // since that's exactly "an admin rejoining", but a token being
+    // issued doesn't mean the browser has actually connected to
+    // LiveKit yet — the room may not genuinely exist yet at this
+    // moment (LiveKit creates a room on the FIRST participant's actual
+    // connection, not on token issuance), so starting an egress here
+    // can fail outright. Instead, livekitWebhook.routes.js listens for
+    // LiveKit's own `room_started` event, which only fires once a
+    // participant has actually connected — guaranteeing the room (and
+    // therefore the egress target) genuinely exists.
 
     const { apiKey, apiSecret, wsUrl } = requireLiveKitConfig();
     const token = new AccessToken(apiKey, apiSecret, {

@@ -155,7 +155,7 @@ test("schema.sql: get_or_create_user_profile only sets ADMIN inside the INSERT v
   const fnStart = sql.indexOf("function public.get_or_create_user_profile");
   const fnBody = sql.slice(fnStart, fnStart + 3000);
   // The on-conflict clause exists to re-sync avatar_url on every
-  // login (see 20260829_sync_google_avatar_on_login.sql) — it is
+  // login (see 20260829120000_sync_google_avatar_on_login.sql) — it is
   // deliberately `do update`, not `do nothing`. What actually matters
   // for the "never re-promotes/demotes" guarantee this test is named
   // for is that `excluded.role` never appears anywhere in that

@@ -242,7 +242,7 @@ come from the real Courses/Plans data, exactly as before.
 
 Courses now support an optional `start_at` timestamp. Admins can set this in the course editor. Published courses with a future start time appear in the authenticated student dashboard under **Upcoming Courses**, but only when the student has an active, non-expired subscription whose plan includes that course. Scheduled lessons remain separate under **Upcoming Lessons**.
 
-For an existing Supabase database, apply `supabase/migrations/20260823_add_course_start_at.sql` before deploying the frontend/backend changes.
+For an existing Supabase database, apply `supabase/migrations/20260823090000_add_course_start_at.sql` before deploying the frontend/backend changes.
 
 ## Data model (Postgres tables — see `supabase/schema.sql`)
 
@@ -333,7 +333,7 @@ This build adds a Zoom-like live meeting foundation using the open-source LiveKi
    `LIVEKIT_WS_URL=ws://localhost:7880`, `LIVEKIT_API_KEY=devkey`, `LIVEKIT_API_SECRET=secret`.
 3. Add `VITE_LIVEKIT_WS_URL=ws://localhost:7880` only if the frontend needs the public URL for other UI code; the meeting join response itself supplies the server URL.
 4. Run the existing backend/frontend install scripts. The new dependencies are `livekit-server-sdk` in the backend and `livekit-client` in the frontend.
-5. Apply `supabase/migrations/20260827_add_live_meetings.sql`.
+5. Apply `supabase/migrations/20260827090000_add_live_meetings.sql`.
 
 ### Current meeting flow
 

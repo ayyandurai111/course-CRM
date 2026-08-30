@@ -167,7 +167,10 @@ export default function MeetingsSection() {
   function recordingBadge(m: Meeting) {
     if (m.recordingStatus === "NONE") return null;
     return (
-      <span className={`ml-2 rounded-full px-2 py-0.5 text-[11px] font-medium ${RECORDING_BADGE_CLASS[m.recordingStatus]}`}>
+      <span
+        className={`ml-2 rounded-full px-2 py-0.5 text-[11px] font-medium ${RECORDING_BADGE_CLASS[m.recordingStatus]}`}
+        title={m.recordingStatus === "FAILED" && m.recordingError ? m.recordingError : undefined}
+      >
         {RECORDING_LABEL[m.recordingStatus]}
       </span>
     );
@@ -206,7 +209,10 @@ export default function MeetingsSection() {
         {segments.map((seg) => (
           <div key={seg.id} className="flex flex-wrap items-center gap-2 text-xs">
             <span className="font-medium text-ink-600">Recording {seg.segmentNumber}</span>
-            <span className={`rounded-full px-2 py-0.5 font-medium ${RECORDING_BADGE_CLASS[seg.status]}`}>
+            <span
+              className={`rounded-full px-2 py-0.5 font-medium ${RECORDING_BADGE_CLASS[seg.status]}`}
+              title={seg.status === "FAILED" && seg.error ? seg.error : undefined}
+            >
               {RECORDING_LABEL[seg.status]}
             </span>
             {seg.status === "READY" && (
