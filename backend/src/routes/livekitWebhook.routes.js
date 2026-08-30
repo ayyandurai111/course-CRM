@@ -1,7 +1,7 @@
 const express = require("express");
 const { WebhookReceiver, LiveKitAPI } = require("livekit-server-sdk");
-const { handleEgressEnded: realHandleEgressEnded, resumeRecordingIfDropped: realResumeRecordingIfDropped } = require("../services/meetingRecordingService");
-const { supabase: realSupabase, row } = require("../lib/db");
+const { handleEgressEnded: realHandleEgressEnded, resumeRecordingIfDropped: realResumeRecordingIfDropped, stopRecording: realStopRecording } = require("../services/meetingRecordingService");
+const { supabase: realSupabase, row, toSnake } = require("../lib/db");
 const { recordingEnabled: realRecordingEnabled } = require("../lib/recordingConfig");
 
 /**
@@ -16,6 +16,7 @@ const { recordingEnabled: realRecordingEnabled } = require("../lib/recordingConf
 function createLivekitWebhookRouter(deps = {}) {
   const handleEgressEnded = deps.handleEgressEnded || realHandleEgressEnded;
   const resumeRecordingIfDropped = deps.resumeRecordingIfDropped || realResumeRecordingIfDropped;
+  const stopRecording = deps.stopRecording || realStopRecording;
   const supabase = deps.supabase || realSupabase;
   const recordingEnabled = deps.recordingEnabled || realRecordingEnabled;
   const router = express.Router();
@@ -83,6 +84,8 @@ function createLivekitWebhookRouter(deps = {}) {
         await handleEgressEnded(event.egressInfo);
       } else if (event.event === "room_started" && event.room?.name && recordingEnabled()) {
         await handleRoomStarted(event.room.name, { resumeRecordingIfDropped, supabase, liveKitEgress });
+      } else if (event.event === "participant_left" && event.room?.name && event.participant && recordingEnabled()) {
+        await handleParticipantLeft(event.room.name, event.participant, { stopRecording, supabase, liveKitEgress });
       }
     } catch (err) {
       // Log and still 200 — LiveKit will retry a 4xx/5xx indefinitely,
@@ -127,6 +130,53 @@ async function handleRoomStarted(roomName, { resumeRecordingIfDropped, supabase,
   if (!egressClient) return; // recording not configured on this deployment
 
   await resumeRecordingIfDropped({ meeting: row(data), egressClient, db: supabase });
+}
+
+/**
+ * The admin leaving is treated as "stop recording now" rather than
+ * waiting for LiveKit's own room-empty timeout to notice and auto-stop
+ * the egress — that timeout is tuned for reclaiming idle server
+ * resources, not for "the teacher just ended class," and can leave a
+ * recording running for several extra minutes of a now-empty room
+ * after the person who was actually teaching has left.
+ *
+ * Deliberately keyed on the ADMIN's participant metadata (set at
+ * token-issue time — see meetings.routes.js's GET /:id/token), not on
+ * "the room is now empty": a student leaving while the admin is still
+ * present must NOT stop the recording, and checking room emptiness
+ * here would need a second API round-trip (list remaining
+ * participants) that's redundant with just checking who left.
+ *
+ * If the admin later rejoins the still-LIVE meeting, room_started
+ * fires again and resumeRecordingIfDropped starts a fresh segment —
+ * see handleRoomStarted above.
+ */
+async function handleParticipantLeft(roomName, participant, { stopRecording, supabase, liveKitEgress }) {
+  let metadata = {};
+  try { metadata = JSON.parse(participant.metadata || "{}"); } catch { /* not JSON — not one of our tokens */ }
+  if (metadata.role !== "ADMIN") return;
+
+  const { data, error } = await supabase
+    .from("meetings")
+    .select("*")
+    .eq("room_name", roomName)
+    .eq("status", "LIVE")
+    .maybeSingle();
+  if (error) {
+    console.error("[livekit-webhook] failed to load meeting for participant_left", error);
+    return;
+  }
+  if (!data) return;
+  const meeting = row(data);
+  if (meeting.recordingStatus !== "RECORDING") return; // nothing currently running to stop
+
+  const egressClient = liveKitEgress();
+  if (!egressClient) return;
+
+  const patch = await stopRecording({ meeting, egressClient });
+  if (patch) {
+    await supabase.from("meetings").update(toSnake(patch)).eq("id", meeting.id);
+  }
 }
 
 module.exports = createLivekitWebhookRouter();

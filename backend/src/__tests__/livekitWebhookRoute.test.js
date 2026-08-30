@@ -318,3 +318,102 @@ test("webhook: egress_ended with no egressInfo at all is accepted and is a safe 
     assert.equal(called, false);
   });
 });
+
+// ---------------------------------------------------------------------
+// participant_left: stop recording immediately when the ADMIN leaves,
+// rather than waiting on LiveKit's own room-empty timeout.
+// ---------------------------------------------------------------------
+
+function fakeMeetingsSupabase({ meetingRow, onUpdate } = {}) {
+  return {
+    from(table) {
+      assert.equal(table, "meetings");
+      return {
+        select() { return this; },
+        eq() { return this; },
+        async maybeSingle() { return { data: meetingRow, error: null }; },
+        update(patch) {
+          if (onUpdate) onUpdate(patch);
+          return { eq: async () => ({ data: null, error: null }) };
+        },
+      };
+    },
+  };
+}
+
+test("webhook: participant_left for the ADMIN stops a RECORDING meeting immediately", async () => {
+  await withEnv({ LIVEKIT_API_KEY: REAL_API_KEY, LIVEKIT_API_SECRET: REAL_API_SECRET, LIVEKIT_WS_URL: "wss://livekit.example.com" }, async () => {
+    const body = JSON.stringify({
+      event: "participant_left",
+      room: { name: "course-course-1-abc" },
+      participant: { identity: "admin-1", metadata: JSON.stringify({ role: "ADMIN" }) },
+    });
+    const token = await signWebhook(body);
+    let stopCalledWith = null;
+    let updatePatch = null;
+    const fakeSupabase = fakeMeetingsSupabase({
+      meetingRow: { id: "m1", room_name: "course-course-1-abc", status: "LIVE", recording_status: "RECORDING", recording_egress_id: "EG_1" },
+      onUpdate: (patch) => { updatePatch = patch; },
+    });
+    await withServer(
+      {
+        recordingEnabled: () => true,
+        supabase: fakeSupabase,
+        stopRecording: async (args) => { stopCalledWith = args; return { recordingStatus: "PROCESSING" }; },
+      },
+      async (port) => {
+        const res = await postWebhook(port, body, { Authorization: token });
+        assert.equal(res.status, 200);
+      }
+    );
+    assert.ok(stopCalledWith, "stopRecording should have been called");
+    assert.equal(stopCalledWith.meeting.id, "m1");
+    assert.equal(updatePatch.recording_status, "PROCESSING");
+  });
+});
+
+test("webhook: participant_left for a STUDENT does NOT stop recording", async () => {
+  await withEnv({ LIVEKIT_API_KEY: REAL_API_KEY, LIVEKIT_API_SECRET: REAL_API_SECRET, LIVEKIT_WS_URL: "wss://livekit.example.com" }, async () => {
+    const body = JSON.stringify({
+      event: "participant_left",
+      room: { name: "course-course-1-abc" },
+      participant: { identity: "student-1", metadata: JSON.stringify({ role: "STUDENT" }) },
+    });
+    const token = await signWebhook(body);
+    let stopCalled = false;
+    const fakeSupabase = fakeMeetingsSupabase({
+      meetingRow: { id: "m1", room_name: "course-course-1-abc", status: "LIVE", recording_status: "RECORDING", recording_egress_id: "EG_1" },
+    });
+    await withServer(
+      { recordingEnabled: () => true, supabase: fakeSupabase, stopRecording: async () => { stopCalled = true; } },
+      async (port) => {
+        const res = await postWebhook(port, body, { Authorization: token });
+        assert.equal(res.status, 200);
+      }
+    );
+    assert.equal(stopCalled, false);
+  });
+});
+
+test("webhook: participant_left for the ADMIN when nothing is currently RECORDING is a safe no-op", async () => {
+  await withEnv({ LIVEKIT_API_KEY: REAL_API_KEY, LIVEKIT_API_SECRET: REAL_API_SECRET, LIVEKIT_WS_URL: "wss://livekit.example.com" }, async () => {
+    const body = JSON.stringify({
+      event: "participant_left",
+      room: { name: "course-course-1-abc" },
+      participant: { identity: "admin-1", metadata: JSON.stringify({ role: "ADMIN" }) },
+    });
+    const token = await signWebhook(body);
+    let stopCalled = false;
+    const fakeSupabase = fakeMeetingsSupabase({
+      meetingRow: { id: "m1", room_name: "course-course-1-abc", status: "LIVE", recording_status: "PROCESSING", recording_egress_id: "EG_1" },
+    });
+    await withServer(
+      { recordingEnabled: () => true, supabase: fakeSupabase, stopRecording: async () => { stopCalled = true; } },
+      async (port) => {
+        const res = await postWebhook(port, body, { Authorization: token });
+        assert.equal(res.status, 200);
+      }
+    );
+    assert.equal(stopCalled, false);
+  });
+});
