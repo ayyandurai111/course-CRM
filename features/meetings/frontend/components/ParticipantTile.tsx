@@ -144,32 +144,32 @@ export default function ParticipantTile({
           <p className="relative text-xs text-white/60">{participantHasMedia(participant) ? "Camera off" : "Joining…"}</p>
         </div>
       )}
-      {/* Bug fix: this tag used to render unconditionally with no
-          `hidden` guard, sitting AFTER (i.e. on top of, in DOM/paint
-          order) the "camera off" profile-picture div above — the two are
-          both `absolute inset-0` with no z-index, so whichever comes
-          later in the markup paints on top. As long as no stream had
-          ever been attached that was invisible: an empty <video> paints
-          fully transparent, so the profile picture showed through
-          underneath just fine. But once a real camera stream had played
-          here and was then turned off, browsers can leave the last
-          painted frame (or a plain black paint) behind even after the
-          track is detached and `srcObject` is cleared. That leftover
-          frame sat on top of the profile picture div and hid it, showing
-          a black tile instead — but only for someone who'd had their
-          camera on at some point in the call, which is exactly the
-          reported "off → on → off" sequence. Hiding the element with
-          `hidden` (rather than removing it from the tree) guarantees no
-          stale paint can ever cover the profile picture, while keeping
-          it mounted so the attach/detach effect below keeps a stable
-          ref instead of racing an unmount. */}
-      <video
-        ref={videoRef}
-        autoPlay
-        playsInline
-        muted={participant.isLocal}
-        className={`absolute inset-0 h-full w-full ${hasVideo ? "" : "hidden"} ${isScreenSharing ? "object-contain" : "object-cover"}`}
-      />
+      {/* Bug fix, round 2: CSS `hidden` (display:none) stops the stale
+          frame from showing in a normal foreground browser tab, but it
+          turned out not to be enough inside LiveKit Egress's headless
+          Chrome recorder (RecordingLayoutPage) — once a camera stream
+          had actually decoded and painted a frame into this <video>,
+          toggling it to `display:none` still left that decoded frame
+          sitting in the compositor's layer cache in some headless
+          runs, with nothing forcing an invalidation the way real user
+          interaction/vsync churn does in a normal tab. Recordings kept
+          showing the last frame (or plain black) over the profile
+          picture even though the exact same toggle worked live.
+          The reliable fix is to not just hide the element but remove
+          it from the tree entirely when there's no video: an unmounted
+          <video> has no layer to leave stale content in, full stop.
+          React remounts a fresh one (empty srcObject) the moment
+          `hasVideo` flips back to true, and the attach effect below
+          re-attaches into it via the ref as usual. */}
+      {hasVideo && (
+        <video
+          ref={videoRef}
+          autoPlay
+          playsInline
+          muted={participant.isLocal}
+          className={`absolute inset-0 h-full w-full ${isScreenSharing ? "object-contain" : "object-cover"}`}
+        />
+      )}
       <audio ref={audioRef} autoPlay muted={participant.isLocal} />
       {isScreenSharing && <div className="absolute left-3 top-3 rounded-full bg-emerald-500/90 px-3 py-1 text-xs font-semibold text-white">Presenting</div>}
       <div className="absolute bottom-3 left-3 flex items-center gap-1.5 rounded-full bg-black/60 px-3 py-1 text-xs font-medium text-white">
