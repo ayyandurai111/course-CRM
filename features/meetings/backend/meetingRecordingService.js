@@ -223,6 +223,7 @@ async function handleEgressEnded(egressInfo, db = supabase) {
       fileSizeBytes,
       durationSeconds,
       status: "DRAFT",
+      source: "RECORDING",
       createdById: meeting.createdById,
     })
   );
@@ -297,6 +298,7 @@ async function handleEgressEndedForArchivedSegment(egressInfo, db) {
         fileSizeBytes,
         durationSeconds,
         status: "DRAFT",
+        source: "RECORDING",
         createdById: meetingRow.created_by_id,
       })
     );

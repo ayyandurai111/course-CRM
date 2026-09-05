@@ -1,5 +1,6 @@
 import type { ContentItem } from "../../../../shared/frontend-core/types/index";
 import ContentTypeBadge, { CONTENT_TYPE_CONFIG } from "../../../../shared/frontend-core/components/common/ContentTypeBadge";
+import LiveRecordingBadge from "../../../../shared/frontend-core/components/common/LiveRecordingBadge";
 import { formatIst } from "../../../../shared/frontend-core/lib/istTime";
 
 function formatDate(iso?: string | null) {
@@ -38,7 +39,10 @@ export default function ContentCard({ item, onOpen }: { item: ContentItem; onOpe
             })()}
           </div>
         )}
-        <ContentTypeBadge type={item.type} className="absolute left-3 top-3" />
+        <div className="absolute left-3 top-3 flex flex-col items-start gap-1.5">
+          <ContentTypeBadge type={item.type} />
+          {item.source === "RECORDING" && <LiveRecordingBadge />}
+        </div>
         {viewed && (
           <span className="absolute right-3 top-3 rounded-full bg-emerald-500 px-2 py-0.5 text-xs font-medium text-white">
             Viewed

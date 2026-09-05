@@ -1,4 +1,5 @@
 import { StatCardsSkeleton, UpcomingCoursesSkeleton, ListRowsSkeleton, Skeleton } from "./Skeleton";
+import { brand } from "../../theme/brand.config";
 
 /** Dark-surface pulse block for skeletons that sit on the meeting room's
  *  ink-950 background, where the light-mode Skeleton (ink-tinted for white
@@ -21,7 +22,7 @@ export function StudentDashboardSkeletonShell() {
     <div className="min-h-screen bg-paper-50 pb-20">
       <header className="sticky top-0 z-30 border-b border-ink-900/8 bg-paper-50/90 backdrop-blur-md">
         <div className="mx-auto flex max-w-6xl items-center justify-between px-5 py-4">
-          <span className="font-display text-lg font-semibold text-ink-950">Coursewell</span>
+          <span className="font-display text-lg font-semibold text-ink-950">{brand.name}</span>
           <div className="h-9 w-9 animate-pulse rounded-full bg-ink-900/10" />
         </div>
       </header>
@@ -91,7 +92,7 @@ export function AdminPanelSkeletonShell() {
   return (
     <div className="min-h-screen bg-paper-50">
       <header className="sticky top-0 z-30 flex items-center justify-between border-b border-ink-900/8 bg-white px-5 py-3">
-        <span className="font-display text-lg font-semibold text-ink-950">Coursewell Admin</span>
+        <span className="font-display text-lg font-semibold text-ink-950">{brand.name} Admin</span>
         <div className="h-8 w-8 animate-pulse rounded-full bg-ink-900/10" />
       </header>
       <div className="mx-auto flex max-w-7xl flex-col md:flex-row">

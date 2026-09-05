@@ -1,6 +1,10 @@
 export type Role = "STUDENT" | "ADMIN";
 export type ContentType = "VIDEO" | "PDF" | "POST";
 export type ContentStatus = "DRAFT" | "SCHEDULED" | "PUBLISHED" | "UNPUBLISHED" | "ARCHIVED";
+// 'RECORDING' = created automatically from a live class's LiveKit Egress
+// output (see meetingRecordingService.js); 'UPLOAD' = an admin added it
+// directly through the Content tab.
+export type ContentSource = "UPLOAD" | "RECORDING";
 export type BillingPeriod = "ONE_TIME" | "MONTHLY" | "YEARLY";
 export type SubscriptionStatus = "ACTIVE" | "EXPIRED" | "CANCELLED" | "PENDING";
 
@@ -87,6 +91,7 @@ export interface ContentItem {
   description?: string | null;
   type: ContentType;
   status: ContentStatus;
+  source?: ContentSource;
   hasFile?: boolean;
   imageUrl?: string | null;
   durationSeconds?: number | null;

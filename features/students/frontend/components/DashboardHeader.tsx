@@ -2,6 +2,7 @@ import { useState } from "react";
 import { useNavigate } from "react-router-dom";
 import { useAuth } from "../../../auth/frontend/context/AuthContext";
 import type { Subscription } from "../../../../shared/frontend-core/types/index";
+import { brand } from "../../../../shared/frontend-core/theme/brand.config";
 
 export default function DashboardHeader({ subscription: _subscription }: { subscription: Subscription | null }) {
   const { user, logout } = useAuth();
@@ -12,7 +13,7 @@ export default function DashboardHeader({ subscription: _subscription }: { subsc
     <header className="sticky top-0 z-30 border-b border-ink-900/8 bg-paper-50/90 backdrop-blur-md">
       <div className="mx-auto flex max-w-6xl items-center justify-between px-5 py-4">
         <div>
-          <span className="font-display text-lg font-semibold text-ink-950">Coursewell</span>
+          <span className="font-display text-lg font-semibold text-ink-950">{brand.name}</span>
         </div>
 
         <div className="flex items-center gap-3">

@@ -8,34 +8,41 @@ export default {
   ],
   theme: {
     extend: {
+      // Every shade below is a CSS variable set at runtime by
+      // shared/frontend-core/theme/applyBrand.ts from brand.config.ts —
+      // see that file to reskin the app for a new client. The
+      // `rgb(var(...) / <alpha-value>)` form is Tailwind's documented
+      // pattern for CSS-variable colors that still support opacity
+      // modifiers (bg-ink-950/50, border-ink-900/8, etc., used
+      // throughout this codebase).
       colors: {
         ink: {
-          950: "#0F1424",
-          900: "#161C33",
-          700: "#2C3457",
-          500: "#545E8C",
-          300: "#9AA2C4",
+          950: "rgb(var(--color-ink-950) / <alpha-value>)",
+          900: "rgb(var(--color-ink-900) / <alpha-value>)",
+          700: "rgb(var(--color-ink-700) / <alpha-value>)",
+          500: "rgb(var(--color-ink-500) / <alpha-value>)",
+          300: "rgb(var(--color-ink-300) / <alpha-value>)",
         },
         paper: {
-          50: "#F7F8FB",
-          100: "#EFF1F7",
+          50: "rgb(var(--color-paper-50) / <alpha-value>)",
+          100: "rgb(var(--color-paper-100) / <alpha-value>)",
         },
         amber: {
-          400: "#E8A23D",
-          500: "#D98D22",
-          600: "#B5721A",
+          400: "rgb(var(--color-amber-400) / <alpha-value>)",
+          500: "rgb(var(--color-amber-500) / <alpha-value>)",
+          600: "rgb(var(--color-amber-600) / <alpha-value>)",
         },
       },
       fontFamily: {
-        display: ["'Lexend'", "sans-serif"],
-        body: ["'Inter'", "sans-serif"],
-        mono: ["'JetBrains Mono'", "monospace"],
+        display: "var(--font-display)",
+        body: "var(--font-body)",
+        mono: "var(--font-mono)",
       },
       boxShadow: {
-        card: "0 1px 2px rgba(15,20,36,0.04), 0 8px 24px -12px rgba(15,20,36,0.12)",
+        card: "var(--shadow-card)",
       },
       borderRadius: {
-        xl2: "1.25rem",
+        xl2: "var(--radius-xl2)",
       },
     },
   },

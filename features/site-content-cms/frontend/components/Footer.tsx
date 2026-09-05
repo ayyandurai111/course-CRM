@@ -1,6 +1,7 @@
 import { useState } from "react";
 import LegalDrawer from "./LegalDrawer";
 import type { SiteContent } from "../../../../shared/frontend-core/types/index";
+import { brand } from "../../../../shared/frontend-core/theme/brand.config";
 
 export default function Footer({ footer, legal }: { footer: SiteContent["footer"]; legal: SiteContent["legal"] }) {
   const [legalOpen, setLegalOpen] = useState<"terms" | "privacy" | null>(null);
@@ -9,7 +10,7 @@ export default function Footer({ footer, legal }: { footer: SiteContent["footer"
     <footer className="border-t border-ink-900/8 px-5 py-12">
       <div className="mx-auto flex max-w-6xl flex-col items-center justify-between gap-6 md:flex-row">
         <div className="text-center md:text-left">
-          <p className="font-display text-lg font-semibold text-ink-950">Coursewell</p>
+          <p className="font-display text-lg font-semibold text-ink-950">{brand.name}</p>
           <p className="mt-1 text-sm text-ink-500">{footer.tagline}</p>
         </div>
 
@@ -21,7 +22,7 @@ export default function Footer({ footer, legal }: { footer: SiteContent["footer"
           <button onClick={() => setLegalOpen("privacy")} className="hover:text-ink-900">Privacy</button>
         </nav>
       </div>
-      <p className="mt-8 text-center text-xs text-ink-300">© {new Date().getFullYear()} Coursewell. All rights reserved.</p>
+      <p className="mt-8 text-center text-xs text-ink-300">© {new Date().getFullYear()} {brand.legalName}. All rights reserved.</p>
 
       {legalOpen === "terms" && (
         <LegalDrawer title="Terms & Conditions" onClose={() => setLegalOpen(null)}>

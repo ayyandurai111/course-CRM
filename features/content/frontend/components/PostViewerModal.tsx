@@ -190,8 +190,16 @@ export default function PostViewerModal({
   if (!content) return null;
 
   return (
-    <div className="fixed inset-0 z-50 flex items-center justify-center bg-ink-950/70 p-4" role="dialog" aria-modal="true">
-      <div className="flex h-[85vh] w-full max-w-lg flex-col overflow-hidden rounded-xl2 bg-white shadow-2xl">
+    <div
+      className="fixed inset-0 z-50 flex items-center justify-center bg-ink-950/70 p-4"
+      role="dialog"
+      aria-modal="true"
+      onClick={onClose}
+    >
+      <div
+        className="flex h-[85vh] w-full max-w-lg flex-col overflow-hidden rounded-xl2 bg-white shadow-2xl"
+        onClick={(e) => e.stopPropagation()}
+      >
         <div className="flex items-center justify-between border-b border-ink-900/8 px-4 py-3">
           <div className="min-w-0">
             <p className="truncate text-sm font-medium text-ink-900">{content.title}</p>

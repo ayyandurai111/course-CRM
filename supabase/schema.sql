@@ -87,6 +87,11 @@ create table if not exists public.content (
   image_url text,
   status text not null default 'DRAFT'
     check (status in ('DRAFT', 'SCHEDULED', 'PUBLISHED', 'UNPUBLISHED', 'ARCHIVED')),
+  -- 'RECORDING' when created by meetingRecordingService.js from a live
+  -- class egress; 'UPLOAD' for everything an admin adds through the
+  -- Content tab. Not settable via the content API — see
+  -- content.routes.js's createContentSchema.
+  source text not null default 'UPLOAD' check (source in ('UPLOAD', 'RECORDING')),
   created_by_id uuid references public.users (id),
   scheduled_at timestamptz,
   published_at timestamptz,

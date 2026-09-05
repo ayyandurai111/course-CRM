@@ -6,6 +6,7 @@ import { ErrorState, EmptyState } from "../../../../shared/frontend-core/compone
 import { TableSkeleton } from "../../../../shared/frontend-core/components/common/Skeleton";
 import StatusPill from "../../../../shared/frontend-core/components/common/StatusPill";
 import ContentTypeBadge from "../../../../shared/frontend-core/components/common/ContentTypeBadge";
+import LiveRecordingBadge from "../../../../shared/frontend-core/components/common/LiveRecordingBadge";
 import ContentFormModal from "./ContentFormModal";
 import ScheduleModal from "../../../courses/frontend/components/ScheduleModal";
 import { MoreVerticalIcon, PlusIcon } from "../../../../shared/frontend-core/components/common/Icons";
@@ -183,6 +184,7 @@ export default function ContentSection() {
                 </div>
                 <div className="mt-2 flex flex-wrap items-center gap-2">
                   <ContentTypeBadge type={item.type} />
+                  {item.source === "RECORDING" && <LiveRecordingBadge />}
                   <StatusPill status={item.status} />
                 </div>
                 <p className="mt-2 text-sm text-ink-500">
@@ -220,7 +222,10 @@ export default function ContentSection() {
                   <tr key={item.id}>
                     <td className="max-w-[220px] truncate px-5 py-3 font-medium text-ink-900">{item.title}</td>
                     <td className="px-5 py-3">
-                      <ContentTypeBadge type={item.type} />
+                      <div className="flex flex-wrap items-center gap-1.5">
+                        <ContentTypeBadge type={item.type} />
+                        {item.source === "RECORDING" && <LiveRecordingBadge />}
+                      </div>
                     </td>
                     <td className="px-5 py-3 text-ink-500">{item.course?.title}</td>
                     <td className="px-5 py-3">

@@ -2,6 +2,8 @@ import { Link, useNavigate } from "react-router-dom";
 import { useEffect, useState } from "react";
 import { useAuth } from "../context/AuthContext";
 import { ApiError, consumeSessionExpiredMessage } from "../../../../shared/frontend-core/lib/apiClient";
+import Modal from "../../../../shared/frontend-core/components/modals/Modal";
+import { brand } from "../../../../shared/frontend-core/theme/brand.config";
 
 function friendlyAuthError(err: unknown): string {
   if (err instanceof ApiError) return err.message;
@@ -14,6 +16,7 @@ export default function LoginPage() {
   const { user, loginWithGoogle, loginWithPassword } = useAuth();
   const navigate = useNavigate();
   const [error, setError] = useState<string | null>(null);
+  const [sessionExpiredMsg, setSessionExpiredMsg] = useState<string | null>(null);
   const [submitting, setSubmitting] = useState(false);
   const [testSubmitting, setTestSubmitting] = useState(false);
   const [testStudentSubmitting, setTestStudentSubmitting] = useState(false);
@@ -27,11 +30,13 @@ export default function LoginPage() {
   }, [user, navigate]);
 
   // Landed here because apiClient detected a dead session (forced
-  // refresh failed too) and signed us out. Show that reason once
-  // instead of leaving the person wondering why they got bounced.
+  // refresh failed too) and signed us out. Show that reason in a modal
+  // — this is the "Session expired" step of the refresh flow: Dashboard
+  // /Course/Admin all funnel through the same 401 -> forced refresh ->
+  // signOut() -> redirect-to-login path, and this is where it surfaces.
   useEffect(() => {
     const msg = consumeSessionExpiredMessage();
-    if (msg) setError(msg);
+    if (msg) setSessionExpiredMsg(msg);
   }, []);
 
   async function handleGoogle() {
@@ -44,6 +49,14 @@ export default function LoginPage() {
       setError(friendlyAuthError(err));
       setSubmitting(false);
     }
+  }
+
+  // The modal's own [Sign In] button just dismisses it — it reveals the
+  // normal login card underneath, which already has Google (and, in dev,
+  // test-account) sign-in options, rather than assuming Google is the
+  // only path someone might want.
+  function dismissSessionExpiredModal() {
+    setSessionExpiredMsg(null);
   }
 
   async function handleTestAccount() {
@@ -86,7 +99,7 @@ export default function LoginPage() {
     <div className="flex min-h-screen items-center justify-center bg-paper-50 px-5">
       <div className="w-full max-w-sm text-center">
         <Link to="/" className="mb-8 block font-display text-lg font-semibold text-ink-950">
-          Coursewell
+          {brand.name}
         </Link>
 
         <div className="rounded-xl2 border border-ink-900/8 bg-white p-8 shadow-card">
@@ -137,10 +150,24 @@ export default function LoginPage() {
           {error && <p className="mt-4 text-sm font-medium text-red-600">{error}</p>}
 
           <p className="mt-6 text-xs text-ink-300">
-            By continuing you agree to Coursewell's Terms and Privacy Policy.
+            By continuing you agree to {brand.legalName}'s Terms and Privacy Policy.
           </p>
         </div>
       </div>
+
+      {sessionExpiredMsg && (
+        <Modal title="Session expired" onClose={dismissSessionExpiredModal} maxWidth="max-w-sm">
+          <p className="text-sm text-ink-600">{sessionExpiredMsg}</p>
+          <div className="mt-5 flex justify-end">
+            <button
+              onClick={dismissSessionExpiredModal}
+              className="rounded-full bg-ink-950 px-5 py-2.5 text-sm font-semibold text-paper-50 transition hover:bg-ink-900"
+            >
+              Sign In
+            </button>
+          </div>
+        </Modal>
+      )}
     </div>
   );
 }

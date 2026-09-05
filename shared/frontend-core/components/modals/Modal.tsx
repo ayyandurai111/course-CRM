@@ -29,9 +29,11 @@ export default function Modal({
       className="fixed inset-0 z-50 flex items-end justify-center bg-ink-950/50 sm:items-center sm:p-4"
       role="dialog"
       aria-modal="true"
+      onClick={onClose}
     >
       <div
         className={`flex max-h-[92vh] w-full flex-col overflow-hidden rounded-t-2xl bg-white shadow-2xl sm:max-h-[90vh] sm:rounded-xl2 ${maxWidth}`}
+        onClick={(e) => e.stopPropagation()}
       >
         <div className="flex shrink-0 items-center justify-between border-b border-ink-900/8 px-5 py-4 sm:px-6">
           <h2 className="font-display text-lg font-semibold text-ink-950">{title}</h2>

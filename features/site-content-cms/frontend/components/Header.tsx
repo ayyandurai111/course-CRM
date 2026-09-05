@@ -1,5 +1,6 @@
 import { useState } from "react";
 import { Link } from "react-router-dom";
+import { brand } from "../../../../shared/frontend-core/theme/brand.config";
 
 const LINKS = [
   { href: "#courses", label: "Courses" },
@@ -15,7 +16,7 @@ export default function Header() {
     <header className="sticky top-0 z-40 border-b border-ink-900/5 bg-paper-50/80 backdrop-blur-md">
       <div className="mx-auto flex max-w-6xl items-center justify-between px-5 py-4">
         <a href="#top" onClick={() => setOpen(false)} className="font-display text-lg font-semibold tracking-tight text-ink-950">
-          Coursewell
+          {brand.name}
         </a>
 
         <nav className="hidden items-center gap-8 md:flex">

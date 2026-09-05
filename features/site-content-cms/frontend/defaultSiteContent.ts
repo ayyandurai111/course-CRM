@@ -1,4 +1,5 @@
 import type { SiteContent } from "../../../shared/frontend-core/types/index";
+import { brand } from "../../../shared/frontend-core/theme/brand.config";
 
 // Shown until the admin saves their own version via the Admin Panel's
 // "Site Content" section. Once they save, this is never used again for
@@ -9,7 +10,7 @@ export const DEFAULT_SITE_CONTENT: SiteContent = {
     titleLine1: "Watch, read, and learn",
     titleLine2: "on your schedule.",
     subtitle:
-      "Coursewell delivers videos, PDFs, and posts straight from your favorite courses — no rigid lesson plans, just fresh content unlocked by your plan.",
+      `${brand.name} delivers videos, PDFs, and posts straight from your favorite courses — no rigid lesson plans, just fresh content unlocked by your plan.`,
     primaryCtaLabel: "Explore courses",
     secondaryCtaLabel: "View plans",
   },

@@ -2,8 +2,30 @@
 @tailwind components;
 @tailwind utilities;
 
+/* Fallback values only — the real source of truth is
+   shared/frontend-core/theme/brand.config.ts, applied at startup by
+   applyBrand.ts (see main.tsx). These just match today's defaults so
+   nothing is unstyled in the instant before that script runs. */
+:root {
+  --color-ink-950: 15 20 36;
+  --color-ink-900: 22 28 51;
+  --color-ink-700: 44 52 87;
+  --color-ink-500: 84 94 140;
+  --color-ink-300: 154 162 196;
+  --color-paper-50: 247 248 251;
+  --color-paper-100: 239 241 247;
+  --color-amber-400: 232 162 61;
+  --color-amber-500: 217 141 34;
+  --color-amber-600: 181 114 26;
+  --font-display: 'Lexend', sans-serif;
+  --font-body: 'Inter', sans-serif;
+  --font-mono: 'JetBrains Mono', monospace;
+  --radius-xl2: 1.25rem;
+  --shadow-card: 0 1px 2px rgba(15, 20, 36, 0.04), 0 8px 24px -12px rgba(15, 20, 36, 0.12);
+}
+
 :focus-visible {
-  outline: 2px solid #d98d22;
+  outline: 2px solid rgb(var(--color-amber-500));
   outline-offset: 2px;
 }
 

@@ -387,8 +387,13 @@ export default function VideoPlayerModal({ content, onClose }: { content: Conten
   const bufferedPct = duration > 0 ? (buffered / duration) * 100 : 0;
 
   return (
-    <div className="fixed inset-0 z-50 flex items-center justify-center bg-ink-950/70 p-4" role="dialog" aria-modal="true">
-      <div className="w-full max-w-3xl overflow-hidden rounded-xl2 bg-black shadow-2xl">
+    <div
+      className="fixed inset-0 z-50 flex items-center justify-center bg-ink-950/70 p-4"
+      role="dialog"
+      aria-modal="true"
+      onClick={handleClose}
+    >
+      <div className="w-full max-w-3xl overflow-hidden rounded-xl2 bg-black shadow-2xl" onClick={(e) => e.stopPropagation()}>
         <div className="flex items-center justify-between bg-ink-950 px-4 py-3">
           <div className="min-w-0">
             <p className="truncate text-sm font-medium text-paper-50">{content.title}</p>

@@ -4,12 +4,14 @@
     <meta charset="UTF-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
     <title>Coursewell — Course Content Platform</title>
+    <!-- The actual font stylesheet is injected by
+         shared/frontend-core/theme/applyBrand.ts, driven by
+         brand.config.ts's fonts.googleFontsUrl — so changing fonts for
+         a new client only requires editing that one file. These
+         preconnects stay static since they just point at Google's font
+         CDN, not a specific family. -->
     <link rel="preconnect" href="https://fonts.googleapis.com" />
     <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
-    <link
-      href="https://fonts.googleapis.com/css2?family=Lexend:wght@500;600;700&family=Inter:wght@400;500;600&family=JetBrains+Mono:wght@500&display=swap"
-      rel="stylesheet"
-    />
   </head>
   <body class="bg-paper-50 text-ink-900 font-body antialiased">
     <div id="root"></div>

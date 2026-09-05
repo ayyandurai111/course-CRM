@@ -4,6 +4,7 @@ import { Field, inputClass, PrimaryButton } from "../../../../shared/frontend-co
 import { apiRequest, ApiError } from "../../../../shared/frontend-core/lib/apiClient";
 import { useProtectedFile } from "../hooks/useProtectedFile";
 import VideoThumbnailPicker from "./VideoThumbnailPicker";
+import LiveRecordingBadge from "../../../../shared/frontend-core/components/common/LiveRecordingBadge";
 import type { Course, ContentItem, ContentType } from "../../../../shared/frontend-core/types/index";
 
 export default function ContentFormModal({
@@ -25,6 +26,11 @@ export default function ContentFormModal({
   const [error, setError] = useState<string | null>(null);
   const [saving, setSaving] = useState(false);
   const [uploadProgress, setUploadProgress] = useState<string | null>(null);
+
+  // A VIDEO row created automatically from a live class recording has no
+  // "replace the video" flow — there's nothing to re-upload over a
+  // LiveKit Egress output. The admin can still change the thumbnail.
+  const isRecording = content?.source === "RECORDING";
 
   // Local preview URL for a freshly-picked (not yet uploaded) video file,
   // so the admin can pick a thumbnail frame from it before saving.
@@ -119,6 +125,12 @@ export default function ContentFormModal({
   return (
     <Modal title={content ? "Edit content" : "New content"} onClose={onClose}>
       <form onSubmit={handleSubmit}>
+        {isRecording && (
+          <div className="mb-4">
+            <LiveRecordingBadge />
+          </div>
+        )}
+
         <Field label="Type" htmlFor="ct-type">
           <select
             id="ct-type"
@@ -154,7 +166,7 @@ export default function ContentFormModal({
           <textarea id="ct-desc" rows={3} value={description} onChange={(e) => setDescription(e.target.value)} className={inputClass} />
         </Field>
 
-        {(type === "VIDEO" || type === "PDF" || type === "POST") && (
+        {!isRecording && (type === "VIDEO" || type === "PDF" || type === "POST") && (
           <Field label={type === "VIDEO" ? "Video file" : type === "PDF" ? "PDF file" : "Image file"} htmlFor="ct-file">
             <input
               id="ct-file"

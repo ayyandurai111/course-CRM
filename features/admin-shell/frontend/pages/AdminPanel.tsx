@@ -11,6 +11,7 @@ import StudentsSection from "../../../students/frontend/components/StudentsSecti
 import PlansSection from "../../../plans-subscription/frontend/components/PlansSection";
 import SiteContentSection from "../../../site-content-cms/frontend/components/SiteContentSection";
 import MeetingsSection from "../../../meetings/frontend/components/MeetingsSection";
+import { brand } from "../../../../shared/frontend-core/theme/brand.config";
 
 export default function AdminPanel() {
   const { user, logout } = useAuth();
@@ -44,7 +45,7 @@ export default function AdminPanel() {
           consistent app instead of two different header styles. */}
       <header className="sticky top-0 z-30 border-b border-ink-900/8 bg-paper-50/90 backdrop-blur-md">
         <div className="flex items-center justify-between px-5 py-4">
-          <span className="min-w-0 truncate font-display text-lg font-semibold text-ink-950">Coursewell Admin</span>
+          <span className="min-w-0 truncate font-display text-lg font-semibold text-ink-950">{brand.name} Admin</span>
           <div className="relative">
             <button
               onClick={() => setMenuOpen((o) => !o)}
