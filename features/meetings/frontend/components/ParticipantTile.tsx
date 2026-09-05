@@ -135,27 +135,35 @@ export default function ParticipantTile({
       {!hasVideo && (
         // Shown the moment someone joins, before their camera track (if
         // any) has actually been subscribed — and permanently for anyone
-        // who never turns their camera on. Without this the tile was
-        // just a blank black box, which read as broken rather than
-        // "audio-only" or "still connecting". If a profile photo is
-        // available it's shown full-bleed (Google Meet-style) instead of
-        // the plain initials circle; a broken/unreachable image URL
-        // falls back to initials rather than showing a broken-image icon.
-        <div className="absolute inset-0 flex flex-col items-center justify-center gap-2 bg-ink-900">
+        // who never turns their camera on. Google Meet–style: a plain
+        // circular avatar (real photo, or initials if none/broken) with
+        // a soft ring around it, no caption text underneath.
+        //
+        // This same tile renders at very different sizes depending on
+        // where MeetingRoom places it — the large flex-1 spotlight tile,
+        // the sm:w-40 filmstrip thumbnails, and the narrow 2-column
+        // mobile grid. A fixed pixel size for the circle looked right
+        // in the spotlight but badly overflowed the small thumbnails, so
+        // the circle's size (and its text) is a percentage of whichever
+        // box it's actually in, clamped so it never gets absurdly tiny
+        // or huge at the extremes.
+        <div className="absolute inset-0 flex items-center justify-center bg-ink-900">
           {avatarUrl && !avatarFailed ? (
             <img
               src={avatarUrl}
               alt=""
               onError={() => setAvatarFailed(true)}
-              className="absolute inset-0 h-full w-full object-cover"
+              style={{ width: "clamp(2.5rem, 32%, 7rem)", height: "clamp(2.5rem, 32%, 7rem)" }}
+              className="rounded-full object-cover ring-4 ring-white/15"
             />
           ) : (
-            <div className="flex h-14 w-14 items-center justify-center rounded-full bg-white/10 text-lg font-semibold text-white/70">
+            <div
+              style={{ width: "clamp(2.5rem, 32%, 7rem)", height: "clamp(2.5rem, 32%, 7rem)", fontSize: "clamp(0.75rem, 10%, 1.5rem)" }}
+              className="flex items-center justify-center rounded-full bg-white/10 font-semibold text-white/70 ring-4 ring-white/15"
+            >
               {initials(displayName)}
             </div>
           )}
-          {avatarUrl && !avatarFailed && <div className="absolute inset-0 bg-black/25" />}
-          <p className="relative text-xs text-white/60">{participantHasMedia(participant) ? "Camera off" : "Joining…"}</p>
         </div>
       )}
       {/* Bug fix, round 2: CSS `hidden` (display:none) stops the stale
