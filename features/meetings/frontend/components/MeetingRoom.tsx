@@ -78,6 +78,20 @@ export default function MeetingRoom({ token, wsUrl, meeting, onLeave, isAdmin }:
   const joinTimesRef = useRef<Map<string, number>>(new Map());
   const [connected, setConnected] = useState(false);
   const [reconnecting, setReconnecting] = useState(false);
+  // Set when this client gets disconnected AFTER having successfully
+  // connected once (see hadConnectedRef + the Disconnected handler
+  // below), and it wasn't this client's own deliberate Leave click
+  // (leavingRef). That combination means someone else ended the room
+  // out from under us — almost always the admin leaving/ending class
+  // (see leave()'s call to POST /:id/end, which deletes the LiveKit
+  // room and force-disconnects everyone still in it). Distinguishing
+  // this from the ordinary "still connecting for the first time" state
+  // matters because otherwise a student just saw the call silently go
+  // blank with a "Connecting to the live class…" message that never
+  // resolves, with no indication the class was actually over.
+  const [meetingEnded, setMeetingEnded] = useState(false);
+  const hadConnectedRef = useRef(false);
+  const leavingRef = useRef(false);
   const [refresh, setRefresh] = useState(0);
   const [micOn, setMicOn] = useState(false);
   const [cameraOn, setCameraOn] = useState(false);
@@ -196,7 +210,11 @@ export default function MeetingRoom({ token, wsUrl, meeting, onLeave, isAdmin }:
     room.on(RoomEvent.TrackMuted, rerender);
     room.on(RoomEvent.TrackUnmuted, rerender);
     room.on(RoomEvent.DataReceived, onData);
-    room.on(RoomEvent.Disconnected, () => active && setConnected(false));
+    room.on(RoomEvent.Disconnected, () => {
+      if (!active) return;
+      setConnected(false);
+      if (hadConnectedRef.current && !leavingRef.current) setMeetingEnded(true);
+    });
     // LiveKit's own client already retries on transient network drops
     // before it ever gives up and fires Disconnected above — these two
     // just let the UI say something during that retry window instead
@@ -222,6 +240,7 @@ export default function MeetingRoom({ token, wsUrl, meeting, onLeave, isAdmin }:
       .then(async () => {
         if (!active) return;
         setConnected(true);
+        hadConnectedRef.current = true;
         // Anyone already in the room when we connect (the normal case
         // of joining a class in progress) should be removable right
         // away, not after an artificial grace period meant for
@@ -447,6 +466,19 @@ export default function MeetingRoom({ token, wsUrl, meeting, onLeave, isAdmin }:
   }
 
   function leave() {
+    // If the teacher/host leaves, there's no one left running the
+    // class — leaving the meeting marked LIVE with students still
+    // connected to an empty room isn't useful, and previously nothing
+    // ever ended it for them (the only "End" control lived on the
+    // meetings list page, not in the call itself, so students could be
+    // left sitting in a live room indefinitely after the admin left).
+    // For an admin, "Leave" now also ends the meeting for everyone,
+    // matching how Meet/Zoom treat the host leaving. A quick confirm
+    // guards against ending class for the whole room by an accidental
+    // click, since this is more disruptive than a student simply
+    // stepping out.
+    if (isAdmin && !confirm("Leaving will end this class for everyone still in the meeting. Continue?")) return;
+    leavingRef.current = true;
     const room = roomRef.current;
     // Stop the raw hardware tracks *directly* first, before asking the
     // room to disconnect. room.disconnect() does stop local tracks too
@@ -468,6 +500,15 @@ export default function MeetingRoom({ token, wsUrl, meeting, onLeave, isAdmin }:
     // join of this same meeting starts from the normal on/on default
     // rather than remembering today's mute forever.
     try { sessionStorage.removeItem(mediaPrefsKey(meeting.id)); } catch { /* best effort */ }
+    if (isAdmin) {
+      // Fire-and-forget: this marks the meeting ENDED and deletes the
+      // LiveKit room server-side, which immediately disconnects every
+      // remaining student too. Not awaited — the admin has already
+      // visually left; if this request fails (e.g. briefly offline)
+      // they can still end it from the meetings list, and there's
+      // nothing useful to show them by blocking on it here.
+      apiRequest(`/meetings/${meeting.id}/end`, { method: "POST" }).catch(() => { /* best effort */ });
+    }
     onLeave();
   }
 
@@ -585,6 +626,18 @@ export default function MeetingRoom({ token, wsUrl, meeting, onLeave, isAdmin }:
         <div className="max-w-md rounded-2xl bg-white/10 p-6 text-center">
           <h1 className="font-display text-xl font-semibold">Unable to join</h1>
           <p className="mt-2 text-sm text-white/70">{error}</p>
+          <button onClick={onLeave} className="mt-5 rounded-full bg-white px-5 py-2 text-sm font-semibold text-ink-950">Go back</button>
+        </div>
+      </div>
+    );
+  }
+
+  if (meetingEnded) {
+    return (
+      <div className="flex min-h-screen items-center justify-center bg-ink-950 px-5 text-white">
+        <div className="max-w-md rounded-2xl bg-white/10 p-6 text-center">
+          <h1 className="font-display text-xl font-semibold">Class has ended</h1>
+          <p className="mt-2 text-sm text-white/70">The teacher has left and this class has ended.</p>
           <button onClick={onLeave} className="mt-5 rounded-full bg-white px-5 py-2 text-sm font-semibold text-ink-950">Go back</button>
         </div>
       </div>
