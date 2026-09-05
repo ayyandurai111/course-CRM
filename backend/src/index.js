@@ -105,7 +105,21 @@ app.use(
         scriptSrc: ["'self'"],
         styleSrc: ["'self'", "https://fonts.googleapis.com"],
         fontSrc: ["'self'", "https://fonts.gstatic.com"],
-        imgSrc: ["'self'", ...supabaseSources, ...(process.env.ALLOWED_IMAGE_ORIGINS || "").split(",").map((v) => v.trim()).filter(Boolean)],
+        // Bug fix: the comment above this block has always described the
+        // intended policy as "img-src allows https: broadly" — for admin-
+        // entered course thumbnails/post images, and (more recently) for
+        // showing a participant's real profile photo on their meeting
+        // tile when their camera is off. But the actual directive below
+        // never included the "https:" scheme source, only 'self' plus a
+        // couple of specific hosts. Every image from any other https
+        // host — including Google-account profile photos
+        // (lh3.googleusercontent.com), which is exactly what populates a
+        // Google-signed-in user's meeting avatarUrl — was silently
+        // dropped by the browser as a CSP violation, so it never loaded
+        // and produced a console error on every camera-off tile for
+        // those users. Adding "https:" here is what the comment already
+        // said this directive was supposed to do.
+        imgSrc: ["'self'", "https:", ...supabaseSources, ...(process.env.ALLOWED_IMAGE_ORIGINS || "").split(",").map((v) => v.trim()).filter(Boolean)],
         connectSrc: ["'self'", ...supabaseSources, ...liveKitSources],
         // "blob:" is required for the admin's video-thumbnail scrubber
         // (VideoThumbnailPicker), which loads a freshly-picked, not-yet-
