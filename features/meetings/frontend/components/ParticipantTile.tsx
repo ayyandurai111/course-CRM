@@ -95,12 +95,20 @@ export default function ParticipantTile({
     (p) => !!p.track && p.track.source === Track.Source.ScreenShare
   );
   const videoPubs = Array.from(participant.videoTrackPublications.values());
-  const hasVideo = videoPubs.some((p) => !!p.track);
-  // TEMPORARY DEBUG — remove once the black-tile-with-camera-off issue
-  // is confirmed fixed. Shows what this component actually sees, since
-  // the visible camera on/off button state and the real publication
-  // state have been suspected of disagreeing.
-  const debugInfo = `pubs=${videoPubs.length} hasVideo=${hasVideo} muted=${videoPubs.map((p) => p.isMuted).join(",")} ended=${videoPubs.map((p) => p.track?.mediaStreamTrack?.readyState).join(",")}`;
+  // Real fix, confirmed via the debug overlay: LiveKit keeps a video
+  // publication around (with a live-looking `.track` reference) even
+  // after the camera is turned off — it marks it `isMuted` and the
+  // underlying MediaStreamTrack's `readyState` becomes "ended", rather
+  // than removing the publication outright. This is deliberate on
+  // LiveKit's side (it makes turning the camera back on instant, no
+  // renegotiation) but it means "does a track object exist" is not the
+  // same question as "is there actually video to show". The old check
+  // only asked the first question, so a camera that had been turned off
+  // still counted as `hasVideo = true`, leaving a blank/dead <video>
+  // element on screen instead of the profile-photo/initials fallback.
+  const hasVideo = videoPubs.some(
+    (p) => !!p.track && !p.isMuted && p.track.mediaStreamTrack?.readyState !== "ended",
+  );
 
   useEffect(() => {
     const audioPublication = Array.from(participant.audioTrackPublications.values()).find((p) => !!p.track);
@@ -177,8 +185,6 @@ export default function ParticipantTile({
         />
       )}
       <audio ref={audioRef} autoPlay muted={participant.isLocal} />
-      {/* TEMPORARY DEBUG overlay — delete this block once resolved */}
-      <div className="absolute right-1 top-1 z-50 rounded bg-fuchsia-600 px-1.5 py-0.5 text-[9px] font-mono text-white">{debugInfo}</div>
       {isScreenSharing && <div className="absolute left-3 top-3 rounded-full bg-emerald-500/90 px-3 py-1 text-xs font-semibold text-white">Presenting</div>}
       <div className="absolute bottom-3 left-3 flex items-center gap-1.5 rounded-full bg-black/60 px-3 py-1 text-xs font-medium text-white">
         {handRaised && <HandIcon aria-label="Hand raised" className="h-3.5 w-3.5 shrink-0 text-amber-400" />}
